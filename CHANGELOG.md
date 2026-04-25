@@ -1,3 +1,14 @@
+## 0.1.2
+
+- `generate` now runs `npm install` + `npm run build` in the output
+  directory by default, so the generated package is import-ready as
+  soon as the command exits — no manual build step before
+  `npm install ../<your_project>_typescript_client` from a consumer.
+- New `--no-build` flag opts out of the install + build (e.g. for
+  pnpm/yarn/bun toolchains, or CI pipelines that build separately).
+- If `npm` isn't on PATH, `generate` still emits source cleanly
+  and prints a hint with the manual recovery commands; non-fatal.
+
 ## 0.1.1
 
 - Bidirectional streaming endpoints (input `Stream<T>` parameters
