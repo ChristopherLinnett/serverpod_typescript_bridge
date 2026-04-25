@@ -13,3 +13,7 @@ paths:
   - test/protocol_to_json_test.dart
   - test/inspect_command_test.dart
   - test/typescript_runtime_layout_test.dart
+  - test/output_paths_test.dart
+  - test/generated_file_tracker_test.dart
+  - test/scaffold_emitter_test.dart
+  - test/generate_command_test.dart
