@@ -13,24 +13,22 @@
 
 include: package:lints/recommended.yaml
 
-analyzer:
-  exclude:
-    # Fixture is an independent Serverpod project with its own analysis
-    # config and its own deps. We don't want our analyzer reaching into it.
-    - test/fixtures/**
-
 # Uncomment the following section to specify additional rules.
 
-# linter:
-#   rules:
-#     - camel_case_types
+linter:
+  rules:
+    unawaited_futures: true
+    avoid_print: true
 
-# analyzer:
-#   exclude:
-#     - path/to/excluded/files/**
-
+analyzer:
+  exclude:
+    - lib/src/generated/**
+    - test/integration/test_tools/serverpod_test_tools.dart
 # For more information about the core and recommended set of lints, see
 # https://dart.dev/go/core-lints
 
 # For additional information about configuring this file, see
 # https://dart.dev/guides/language/analysis-options
+
+formatter:
+  trailing_commas: preserve

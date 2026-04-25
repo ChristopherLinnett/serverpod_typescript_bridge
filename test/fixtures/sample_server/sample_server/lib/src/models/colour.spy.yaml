@@ -1,0 +1,10 @@
+### A colour. Uses `byName` serialization (wire form is the value's name string).
+enum: Colour
+serialized: byName
+values:
+  ### Red.
+  - red
+  ### Green.
+  - green
+  ### Blue.
+  - blue

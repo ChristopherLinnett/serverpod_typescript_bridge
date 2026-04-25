@@ -1,0 +1,9 @@
+### A cat. Concrete subclass of the sealed [Animal].
+class: Cat
+extends: Animal
+fields:
+  ### Number of lives remaining.
+  livesRemaining: int
+
+  ### Whether the cat is an indoor cat.
+  isIndoor: bool

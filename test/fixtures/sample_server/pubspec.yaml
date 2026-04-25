@@ -1,0 +1,9 @@
+name: sample_workspace
+publish_to: none
+
+environment:
+  sdk: '^3.8.0'
+
+workspace:
+  - sample_server
+  - sample_client

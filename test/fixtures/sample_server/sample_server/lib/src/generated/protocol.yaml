@@ -1,0 +1,38 @@
+auth:
+  - whoAmI:
+  - secret:
+chat:
+  - echoStream:
+collections:
+  - echoIntList:
+  - echoStringSet:
+  - echoStringIntMap:
+  - echoIntStringMap:
+legacy:
+  - greet:
+  - sayHi:
+models:
+  - echoProfile:
+  - promoteToAdmin:
+  - echoAnimal:
+  - findOrThrow:
+nullables:
+  - nullableInt:
+  - nullableString:
+  - nullableProfile:
+  - nullableList:
+primitives:
+  - echoInt:
+  - echoDouble:
+  - echoString:
+  - echoBool:
+  - echoDateTime:
+  - echoDuration:
+  - echoBigInt:
+  - echoUuid:
+  - echoBytes:
+public:
+  - ping:
+  - hello:
+streaming:
+  - countTo:
