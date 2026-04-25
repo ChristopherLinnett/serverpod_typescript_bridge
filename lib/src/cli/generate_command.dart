@@ -2,26 +2,23 @@
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
-import 'package:path/path.dart' as p;
 import 'package:serverpod_cli/analyzer.dart';
 import 'package:serverpod_cli/src/config/experimental_feature.dart';
 
 import '../analyzer/protocol_loader.dart';
+import '../discovery/module_class_index.dart';
+import '../discovery/module_client_layout.dart';
+import '../discovery/module_discoverer.dart';
 import '../discovery/server_directory_finder.dart';
-import '../emit/client_emitter.dart';
-import '../emit/endpoint_emitter.dart';
-import '../emit/generated_file_tracker.dart';
-import '../emit/model_emitter.dart';
 import '../emit/output_paths.dart';
-import '../emit/scaffold_emitter.dart';
-import '../emit/ts_type_mapper.dart';
+import 'generation_pipeline.dart';
 import 'post_build_runner.dart';
 
 /// `generate` — produce the TypeScript client package for a Serverpod
-/// project. Default: emits source AND runs `npm install` + `npm run
-/// build` so the resulting package is import-ready. Pass `--no-build`
-/// to skip the install + build steps (e.g. for non-npm toolchains
-/// or CI pipelines that build separately).
+/// project. Defaults: discovers every Serverpod module the project
+/// depends on, generates a TS client for each as a sibling of the app
+/// client, then generates the app client with `file:..` deps wired up
+/// and `npm install` + `npm run build` run at the end.
 class GenerateCommand extends Command<int> {
   GenerateCommand() {
     argParser
@@ -45,6 +42,14 @@ class GenerateCommand extends Command<int> {
         help: 'After emitting source, run `npm install` + `npm run '
             'build` in the output directory so it is import-ready. '
             'Pass `--no-build` to skip; you can build manually later.',
+      )
+      ..addFlag(
+        'gen-modules',
+        defaultsTo: true,
+        help: 'Recursively generate TS clients for every Serverpod '
+            'module the project depends on (placed as siblings of the '
+            'app client). Pass `--no-gen-modules` to skip — only useful '
+            'if you manage module clients separately.',
       );
   }
 
@@ -81,79 +86,91 @@ class GenerateCommand extends Command<int> {
       return 70;
     }
 
-    final paths = OutputPaths.resolve(
+    final appPaths = OutputPaths.resolve(
       config,
       explicitOutput: ar['output'] as String?,
     );
 
-    final ProtocolDefinition ir;
+    // Pre-flight the IR for the app — fail fast on analyzer errors
+    // before discovering modules (recursive failures are harder to
+    // attribute back to the caller).
     try {
-      ir = await ProtocolLoader.load(serverDir);
+      await ProtocolLoader.load(serverDir);
     } on ProtocolLoaderException catch (e) {
       stderr.writeln(e.message);
       return 70;
     }
 
-    final tracker = GeneratedFileTracker([
-      Directory(p.join(paths.outputDir.path, 'src', 'runtime')),
-      Directory(p.join(paths.outputDir.path, 'src', 'protocol')),
-      Directory(p.join(paths.outputDir.path, 'src', 'endpoints')),
-    ]);
-
-    final scaffold = ScaffoldEmitter(
-      outputPaths: paths,
-      tracker: tracker,
-      additionalBarrelExports: const [
-        './protocol/index.js',
-        './endpoints/index.js',
-        './protocol.js',
-        './client.js',
-      ],
-    );
-    await scaffold.emit();
-
-    final sealedClassNames = ir.models
-        .whereType<ModelClassDefinition>()
-        .where((m) => m.isSealed)
-        .map((m) => m.className)
-        .toSet();
-    final enumClassNames = ir.models
-        .whereType<EnumDefinition>()
-        .map((e) => e.className)
-        .toSet();
-    final projectClassNames = {for (final m in ir.models) m.className};
-    ModelEmitter(
-      outputDir: paths.outputDir,
-      tracker: tracker,
-      mapper: TsTypeMapper(
-        sealedClassNames: sealedClassNames,
-        enumClassNames: enumClassNames,
-        projectClassNames: projectClassNames,
-      ),
-    ).emitAll(ir.models);
-    EndpointEmitter(
-      outputDir: paths.outputDir,
-      tracker: tracker,
-      mapper: TsTypeMapper(
-        modelPrefix: 'p.',
-        sealedClassNames: sealedClassNames,
-        enumClassNames: enumClassNames,
-        projectClassNames: projectClassNames,
-      ),
-    ).emitAll(ir.endpoints);
-    ClientEmitter(
-      outputDir: paths.outputDir,
-      tracker: tracker,
+    final layoutResolver = ModuleLayoutResolver(
+      appClientOutputDir: appPaths.outputDir,
       config: config,
-    ).emit(endpoints: ir.endpoints, models: ir.models);
+    );
 
-    tracker.sweepOrphans();
+    // 1. Discover modules + build the cross-package class index.
+    final discovered = (ar['gen-modules'] as bool)
+        ? _discoverModules(serverDir)
+        : <DiscoveredModule>[];
+    final moduleIndex = await ModuleClassIndex.build(
+      discovered: discovered,
+      layoutResolver: layoutResolver,
+    );
 
-    stdout.writeln('Wrote TypeScript client to ${paths.outputDir.path}');
+    // 2. Generate each discovered module FIRST so the app client can
+    //    declare `file:..` deps that resolve cleanly.
+    for (final mod in discovered) {
+      final layout = layoutResolver.resolve(mod.dartPkgName);
+      stdout.writeln(
+        'Generating module client: ${mod.dartPkgName} → '
+        '${layout.outputDir.path}',
+      );
+      try {
+        await GenerationPipeline.run(
+          serverDir: mod.serverPkgDir,
+          outputDir: layout.outputDir,
+          moduleIndex: moduleIndex,
+        );
+      } catch (e) {
+        stderr.writeln(
+          'Failed to generate module ${mod.dartPkgName}: $e',
+        );
+        return 70;
+      }
+    }
 
+    // 3. Generate the app client with module-aware imports + deps.
+    try {
+      await GenerationPipeline.run(
+        serverDir: serverDir,
+        outputDir: appPaths.outputDir,
+        moduleIndex: moduleIndex,
+      );
+    } catch (e) {
+      stderr.writeln('Failed to generate app client: $e');
+      return 70;
+    }
+
+    stdout.writeln('Wrote TypeScript client to ${appPaths.outputDir.path}');
+
+    // 4. Build module clients first, then the app. The app's tsc
+    //    consumes module `dist/` outputs through the `file:..` deps;
+    //    if those `dist/` directories don't exist yet the app's
+    //    typecheck fails (`Cannot find module 'auth_typescript_client'
+    //    or its corresponding type declarations`). npm doesn't run
+    //    `prepare` for `file:` deps, so we have to drive the builds
+    //    ourselves and in dependency order.
     if (ar['build'] as bool) {
+      for (final mod in discovered) {
+        final layout = layoutResolver.resolve(mod.dartPkgName);
+        final modWarn =
+            await PostBuildRunner(outputDir: layout.outputDir).run();
+        if (modWarn != null) {
+          stderr.writeln(
+            'Module client ${mod.dartPkgName} build skipped: $modWarn',
+          );
+        }
+      }
       final warning =
-          await PostBuildRunner(outputDir: paths.outputDir).run();
+          await PostBuildRunner(outputDir: appPaths.outputDir).run();
       if (warning != null) {
         stderr.writeln(warning);
       } else {
@@ -167,6 +184,18 @@ class GenerateCommand extends Command<int> {
       );
     }
     return 0;
+  }
+
+  List<DiscoveredModule> _discoverModules(Directory serverDir) {
+    try {
+      return ModuleDiscoverer.discover(serverDir);
+    } on StateError catch (e) {
+      stderr.writeln(
+        'Skipping module discovery: ${e.message}\n'
+        'Pass `--no-gen-modules` to suppress this attempt.',
+      );
+      return const [];
+    }
   }
 
   static bool _experimentalFeaturesInitialised = false;

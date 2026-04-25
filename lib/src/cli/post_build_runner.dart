@@ -61,26 +61,45 @@ class PostBuildRunner {
   }
 
   /// Returns the platform-specific `npm` executable, or null if missing.
+  ///
+  /// On systems where `which`/`where` themselves aren't available (or
+  /// process spawning is blocked) the lookup must NOT crash `generate`
+  /// — post-build is intentionally non-fatal. We swallow [ProcessException]
+  /// and treat it the same as "npm not found".
   String? _resolveNpm() {
     final candidates = Platform.isWindows
         ? const ['npm.cmd', 'npm']
         : const ['npm'];
     for (final c in candidates) {
-      final result = Process.runSync(
-        Platform.isWindows ? 'where' : 'which',
-        [c],
-      );
-      if (result.exitCode == 0 &&
-          (result.stdout as String).trim().isNotEmpty) {
-        return c;
+      try {
+        final result = Process.runSync(
+          Platform.isWindows ? 'where' : 'which',
+          [c],
+        );
+        if (result.exitCode == 0 &&
+            (result.stdout as String).trim().isNotEmpty) {
+          return c;
+        }
+      } on ProcessException {
+        return null;
       }
     }
     return null;
   }
 
+  /// Quotes [outputDir]'s path so a copy-pasted recovery command works
+  /// even when the path contains spaces, quotes, or shell metacharacters.
+  String _quotedOutputDirPath() {
+    final path = outputDir.path;
+    if (Platform.isWindows) {
+      return '"${path.replaceAll('"', r'\"')}"';
+    }
+    return "'${path.replaceAll("'", r"'\''")}'";
+  }
+
   String _hint(String reason) {
     return '$reason\n'
-        '  cd ${outputDir.path}\n'
+        '  cd ${_quotedOutputDirPath()}\n'
         '  npm install\n'
         '  npm run build';
   }

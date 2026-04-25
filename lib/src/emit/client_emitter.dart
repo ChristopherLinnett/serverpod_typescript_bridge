@@ -8,7 +8,9 @@ import 'package:serverpod_cli/src/analyzer/dart/definitions.dart'
 import 'package:serverpod_cli/src/config/config.dart' show ModuleConfig;
 import 'package:yaml/yaml.dart';
 
+import '../discovery/module_class_index.dart';
 import 'generated_file_tracker.dart';
+import 'module_import_lines.dart';
 import 'ts_writer.dart';
 
 const _generatedHeader = '''
@@ -28,11 +30,24 @@ class ClientEmitter {
     required this.outputDir,
     required this.tracker,
     required this.config,
+    this.moduleIndex,
+    this.referencedModuleClassNames = const {},
   });
 
   final Directory outputDir;
   final GeneratedFileTracker tracker;
   final GeneratorConfig config;
+
+  /// Index of every class defined in modules this project (transitively)
+  /// depends on. Null for projects with no modules.
+  final ModuleClassIndex? moduleIndex;
+
+  /// The subset of [moduleIndex] class names that this project actually
+  /// references. Drives the cross-package `import` lines emitted at the
+  /// top of `protocol.ts` and the extra cases in
+  /// `deserializeByClassName`. The pipeline has already walked the IR
+  /// to build this set, so we don't recompute it here.
+  final Set<String> referencedModuleClassNames;
 
   bool get _isModule => config.type == PackageType.module;
 
@@ -99,18 +114,21 @@ class ClientEmitter {
     _writeRoot('client.ts', w.toString());
   }
 
-  /// Generates a small wrapper class with one Caller field per declared
-  /// module. Each Caller delegates back through the parent Client. The
-  /// module client packages must already be installed (npm) and importable
-  /// — for v0.1 we emit a stub class because npm publishing of module
-  /// clients lands in v0.2.
+  /// Generates a small wrapper exposing one Caller-shaped field per
+  /// module the project declares. Type-safe, real Caller wiring is
+  /// already covered by the protocol-switch dispatch — module classes
+  /// resolve through cross-package imports — so we keep this wrapper
+  /// as a `unknown`-typed convenience until callers actually request
+  /// a typed namespace surface (tracked by the `Modules.<nickname>`
+  /// stub below).
   void _emitModulesClass(TsWriter w, List<ModuleConfig> modules) {
     w.writeln('/**');
     w.writeln(' * Per-module callers, instantiated lazily by [Client].');
     w.writeln(' *');
-    w.writeln(' * NOTE: v0.1 emits stubs (`unknown`) for module callers.');
-    w.writeln(' * The Caller import path is left as a TODO until v0.2,');
-    w.writeln(' * when module client packages are published to npm.');
+    w.writeln(' * Each field is typed as `unknown` for now; cross-package');
+    w.writeln(' * deserialization already routes through the project');
+    w.writeln(' * Protocol switch, so consumers can reach module types');
+    w.writeln(' * directly via the generated module client packages.');
     w.writeln(' */');
     w.writeln('export class Modules {');
     w.indent(() {
@@ -121,10 +139,7 @@ class ClientEmitter {
       w.writeln('constructor(_parent: r.EndpointCaller) {');
       w.indent(() {
         for (final m in modules) {
-          w.writeln(
-            'this.${m.nickname} = undefined; '
-            '// TODO(v0.2): wire to ${m.nickname}_typescript_client',
-          );
+          w.writeln('this.${m.nickname} = undefined;');
         }
       });
       w.writeln('}');
@@ -183,35 +198,20 @@ class ClientEmitter {
     // bare and prefixed forms so server/client agree across modules.
     final ownPrefix = _isModule ? _readSelfNickname() : null;
 
-    final entries = <_ClassEntry>[];
-    for (final m in models) {
-      if (m is ModelClassDefinition) {
-        entries.add(_ClassEntry(
-          name: m.className,
-          isSealed: m.isSealed,
-          receiver: m.isSealed ? '${m.className}Base' : m.className,
-        ));
-      } else if (m is ExceptionClassDefinition) {
-        entries.add(_ClassEntry(
-          name: m.className,
-          isSealed: false,
-          receiver: m.className,
-        ));
-      } else if (m is EnumDefinition) {
-        entries.add(_ClassEntry(
-          name: m.className,
-          isSealed: false,
-          receiver: '${m.className}Codec',
-        ));
-      }
-    }
-    entries.sort((a, b) => a.name.compareTo(b.name));
+    final entries = <_ClassEntry>[
+      for (final m in models) ..._projectEntriesFor(m),
+      ..._moduleEntries(),
+    ]..sort((a, b) => a.name.compareTo(b.name));
+    final moduleImportLines = _moduleImportLines();
 
     final w = TsWriter()
       ..writeRaw(_generatedHeader)
       ..writeln("import * as r from './runtime/index.js';")
-      ..writeln("import * as p from './protocol/index.js';")
-      ..blankLine();
+      ..writeln("import * as p from './protocol/index.js';");
+    for (final line in moduleImportLines) {
+      w.writeln(line);
+    }
+    w.blankLine();
 
     w.writeln('export class Protocol extends r.SerializationManager {');
     w.indent(() {
@@ -248,7 +248,7 @@ class ClientEmitter {
         w.writeln('switch (className) {');
         w.indent(() {
           for (final e in entries) {
-            w.writeln("case '${e.name}': return p.${e.receiver}.fromJson(data);");
+            w.writeln("case '${e.name}': return ${e.receiver}.fromJson(data);");
           }
           w.writeln('default: return undefined;');
         });
@@ -283,6 +283,95 @@ class ClientEmitter {
   String _filenameStem(String name) =>
       name.replaceAllMapped(RegExp(r'[A-Z]'), (m) => '_${m[0]!.toLowerCase()}');
 
+  /// Builds the dispatch entries for a single project-defined model.
+  /// Returns an empty list for unsupported model kinds so the caller
+  /// can splat results unconditionally.
+  List<_ClassEntry> _projectEntriesFor(SerializableModelDefinition m) {
+    if (m is ModelClassDefinition) {
+      return [
+        _ClassEntry(
+          name: m.className,
+          receiver: _receiverFor(
+            name: m.className,
+            prefix: 'p.',
+            isEnum: false,
+            isSealed: m.isSealed,
+          ),
+        ),
+      ];
+    }
+    if (m is ExceptionClassDefinition) {
+      return [
+        _ClassEntry(
+          name: m.className,
+          receiver: _receiverFor(
+            name: m.className,
+            prefix: 'p.',
+            isEnum: false,
+            isSealed: false,
+          ),
+        ),
+      ];
+    }
+    if (m is EnumDefinition) {
+      return [
+        _ClassEntry(
+          name: m.className,
+          receiver: _receiverFor(
+            name: m.className,
+            prefix: 'p.',
+            isEnum: true,
+            isSealed: false,
+          ),
+        ),
+      ];
+    }
+    return const [];
+  }
+
+  /// Dispatch entries for every referenced module-defined class —
+  /// imported under bare names so calling `<Name>.fromJson(...)`
+  /// resolves through the matching `import { Name } from '<pkg>'` line.
+  List<_ClassEntry> _moduleEntries() {
+    final mi = moduleIndex;
+    if (mi == null || referencedModuleClassNames.isEmpty) return const [];
+    return [
+      for (final name in referencedModuleClassNames)
+        if (mi.layoutFor(name) != null)
+          _ClassEntry(
+            name: name,
+            receiver: _receiverFor(
+              name: name,
+              prefix: '',
+              isEnum: mi.isEnum(name),
+              isSealed: mi.isSealed(name),
+            ),
+          ),
+    ];
+  }
+
+  /// `import { ... } from '<pkg>';` lines for every module package the
+  /// protocol switch dispatches into. Empty when there are no module
+  /// references — keeps the no-modules emission byte-identical to v0.1.
+  List<String> _moduleImportLines() {
+    final mi = moduleIndex;
+    if (mi == null) return const [];
+    return ModuleImportLines(mi).forClassNames(referencedModuleClassNames);
+  }
+
+  /// Single source of truth for "what symbol do I call `.fromJson` on
+  /// for a given name?". Used by both project and module entry paths.
+  String _receiverFor({
+    required String name,
+    required String prefix,
+    required bool isEnum,
+    required bool isSealed,
+  }) {
+    if (isEnum) return '$prefix${name}Codec';
+    if (isSealed) return '$prefix${name}Base';
+    return '$prefix$name';
+  }
+
   /// Reads the top-level `nickname:` key from this project's
   /// `config/generator.yaml`. Required for module-type projects so the
   /// emitter can name the Caller and the wire prefix correctly.
@@ -310,13 +399,12 @@ class ClientEmitter {
 }
 
 class _ClassEntry {
-  _ClassEntry({
-    required this.name,
-    required this.isSealed,
-    required this.receiver,
-  });
+  _ClassEntry({required this.name, required this.receiver});
 
+  /// The wire-form `__className__` (after stripping any `module.` prefix).
   final String name;
-  final bool isSealed;
+
+  /// The full TS expression to call `.fromJson(...)` on, including any
+  /// import-alias prefix (`p.` for project-local, bare for module).
   final String receiver;
 }

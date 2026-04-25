@@ -1,3 +1,35 @@
+## 0.2.0
+
+- Module-aware generation. The CLI now walks `.dart_tool/package_config.json`
+  for the project's Serverpod module dependencies and recursively generates a
+  TS client for each as a sibling of the app client (default
+  `<server>/../<module>_typescript_client/`). The app client's `package.json`
+  declares the module clients via `file:..` deps so a single `npm install`
+  resolves the whole graph in place — no npm publishing required.
+- Cross-package emission. Model and endpoint files now emit
+  `import { Name<, NameBase>?<, NameCodec>? } from '<module-pkg>';` lines for
+  every module-defined type they reference, instead of falling back to the
+  v0.1.4 `unknown /* TODO */` placeholder. Sealed bases bring in `Name + NameBase`,
+  enums bring in `Name + NameCodec`, plain classes bring in `Name`.
+- Protocol switch dispatches module classes. The generated `Protocol`'s
+  `deserializeByClassName` switch now contains a case per referenced module
+  class — dispatching through the bare imported symbol — so the wire form
+  `auth.AuthSuccess` round-trips into a real typed value rather than `unknown`.
+- New CLI flag `--no-gen-modules` skips the recursive module generation
+  (default: enabled). Useful when module clients are managed separately.
+- New optional `typescript_client_modules:` block in `config/generator.yaml`
+  overrides the per-module output directory or npm package name:
+  ```yaml
+  typescript_client_modules:
+    serverpod_auth_idp_server:
+      output: ../my_custom_path
+      npm_name: '@my-org/auth-idp-ts'
+  ```
+- Internal: extracted `lib/src/analyzer/ir_walker.dart` (shared IR walks),
+  `lib/src/emit/module_import_lines.dart` (cross-package import grouping),
+  and `lib/src/cli/generation_pipeline.dart` (single per-project flow used
+  by both the app and every module dep).
+
 ## 0.1.4
 
 - Bugfix: type mapper now handles `void`, `dynamic`, and `Object`

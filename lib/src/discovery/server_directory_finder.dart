@@ -64,10 +64,13 @@ class ServerDirectoryFinder {
     final dynamic yaml;
     try {
       yaml = loadYaml(pubspec.readAsStringSync());
-    } catch (_) {
-      // An invalid pubspec.yaml on the walk path means "not a Serverpod
-      // server" — keep walking. Don't let a malformed yaml in a parent
-      // directory blow up the whole search.
+    } on YamlException {
+      // Malformed pubspec on the walk path → not a Serverpod server.
+      return false;
+    } on FileSystemException {
+      // Pubspec became unreadable between existsSync() and read.
+      return false;
+    } on FormatException {
       return false;
     }
     if (yaml is! YamlMap) return false;

@@ -20,3 +20,7 @@ paths:
   - test/ts_writer_test.dart
   - test/module_emission_test.dart
   - test/bidi_streaming_emission_test.dart
+  - test/module_discoverer_test.dart
+  - test/module_client_layout_test.dart
+  - test/module_import_lines_test.dart
+  - test/client_emitter_modules_test.dart

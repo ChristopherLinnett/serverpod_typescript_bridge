@@ -34,8 +34,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: npm install (TypeScript runtime)
-        run: npm install
+      - name: npm ci (TypeScript runtime)
+        run: npm ci
         working-directory: lib/runtime/typescript
 
       - name: dart analyze
@@ -56,6 +56,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
       - run: npm run typecheck
       - run: npm test

@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:serverpod_cli/analyzer.dart';
 
 import 'generated_file_tracker.dart';
+import 'module_import_lines.dart';
 import 'ts_type_mapper.dart';
 import 'ts_writer.dart';
 
@@ -25,6 +26,21 @@ class ModelEmitter {
   final Directory outputDir;
   final GeneratedFileTracker tracker;
   final TsTypeMapper mapper;
+
+  late final ModuleImportLines _moduleImports =
+      ModuleImportLines(mapper.moduleIndex);
+
+  /// Appends one cross-package `import` line per module package
+  /// referenced by [fields] to [w]. Shared between `_emitClass` and
+  /// `_emitException` so the two paths can't drift.
+  void _writeModuleImports(
+    TsWriter w,
+    List<SerializableModelFieldDefinition> fields,
+  ) {
+    for (final line in _moduleImports.forTypes(fields.map((f) => f.type))) {
+      w.writeln(line);
+    }
+  }
 
   /// Class names emitted as TS enums. Used for cross-file imports —
   /// enum imports also need to bring in `<Name>Codec`.
@@ -119,8 +135,13 @@ class ModelEmitter {
   }
 
   /// Walks a [TypeDefinition] recursively (descending into generics)
-  /// and yields every project-class name referenced. Skips primitives,
-  /// collections (List/Set/Map/Future/Stream), and any self-reference.
+  /// and adds every project-class name referenced to [out]. Primitives
+  /// and collection wrappers are skipped because they're not in
+  /// [_allClassNames].
+  ///
+  /// Self-references ARE collected here; [_buildImportLines] strips the
+  /// owner's own className before writing the import lines so the file
+  /// doesn't import itself.
   void _collectReferencedProjectTypes(
     TypeDefinition type,
     Set<String> out,
@@ -250,6 +271,7 @@ class ModelEmitter {
     for (final line in imports) {
       w.writeln(line);
     }
+    _writeModuleImports(w, fields);
     w.blankLine();
 
     w.docComment(model.documentation?.join('\n'));
@@ -378,6 +400,7 @@ class ModelEmitter {
     for (final line in imports) {
       w.writeln(line);
     }
+    _writeModuleImports(w, fields);
     w.blankLine();
 
     w.docComment(model.documentation?.join('\n'));

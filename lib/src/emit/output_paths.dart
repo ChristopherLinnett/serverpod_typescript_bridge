@@ -13,7 +13,11 @@ import 'package:yaml/yaml.dart';
 ///   2. `typescript_client_package_path` in `config/generator.yaml`.
 ///   3. Sibling of the server package: `<server>/../<name>_typescript_client/`.
 class OutputPaths {
-  OutputPaths._({
+  /// Construct directly when caller already knows the explicit dir +
+  /// pkg name (used by [GenerationPipeline] for module clients);
+  /// otherwise prefer [resolve] which derives both from a
+  /// [GeneratorConfig].
+  OutputPaths({
     required this.outputDir,
     required this.packageName,
   });
@@ -32,7 +36,7 @@ class OutputPaths {
     final outputPath = explicitOutput ??
         _readFromGeneratorYaml(config) ??
         _defaultPath(config);
-    return OutputPaths._(
+    return OutputPaths(
       outputDir: Directory(outputPath),
       packageName: '${config.name}_typescript_client',
     );

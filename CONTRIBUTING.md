@@ -70,5 +70,5 @@ Both rely on the runtime's `node_modules` having been installed (see the local-s
 2. Update `CHANGELOG.md`.
 3. Verify the full suite is green: `dart analyze && dart test && (cd lib/runtime/typescript && npm test)`.
 4. Run the external smoke-test: generate against a non-fixture Serverpod project (e.g. a fresh `serverpod create -t mini -n smoke` outside this repo) and verify the output is `tsc --noEmit` clean.
-5. Commit + tag: `git tag v<version> && git push --tags`.
+5. Commit + tag + push (commit AND tag): `git commit -am "Release v<version>" && git tag v<version> && git push --follow-tags`.
 6. (Optional, deferred to v0.2) `dart pub publish` once stabilised.

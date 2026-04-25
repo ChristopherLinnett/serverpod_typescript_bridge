@@ -1,6 +1,8 @@
 // ignore_for_file: implementation_imports
 import 'package:serverpod_cli/analyzer.dart';
 
+import '../discovery/module_class_index.dart';
+
 /// A TypeScript type reference plus the JSON conversion expressions that
 /// turn a value of that type into wire form (and back).
 class TsTypeRef {
@@ -37,9 +39,11 @@ class TsTypeMapper {
     Set<String>? sealedClassNames,
     Set<String>? enumClassNames,
     Set<String>? projectClassNames,
+    ModuleClassIndex? moduleIndex,
   })  : sealedClassNames = sealedClassNames ?? const {},
         enumClassNames = enumClassNames ?? const {},
-        projectClassNames = projectClassNames ?? const {};
+        projectClassNames = projectClassNames ?? const {},
+        moduleIndex = moduleIndex ?? ModuleClassIndex.empty;
 
   final String modelPrefix;
 
@@ -55,12 +59,15 @@ class TsTypeMapper {
   /// instead of `<value>.toJson()` / `<Name>.fromJson(json)`.
   final Set<String> enumClassNames;
 
-  /// Every class name emitted as part of THIS project (sealed, enum,
-  /// regular class, exception). Anything not in here is a foreign
-  /// type — typically defined in a Serverpod module the project
-  /// depends on. v0.1.x stubs foreign types as `unknown`; v0.2 will
-  /// emit a real cross-package import.
+  /// Every class name emitted as part of THIS project. Anything not
+  /// in here is foreign — either resolved via [moduleIndex] (a real
+  /// module dep) or genuinely unknown (`unknown` fallback).
   final Set<String> projectClassNames;
+
+  /// Index of every class name defined in modules the project depends
+  /// on. The mapper emits the bare TS name for these; the surrounding
+  /// emitter is responsible for the matching `import` line.
+  final ModuleClassIndex moduleIndex;
 
   TsTypeRef map(TypeDefinition type) {
     final base = _mapInner(type);
@@ -123,19 +130,12 @@ class TsTypeMapper {
         return _mapMap(type);
       case 'Future':
       case 'Stream':
-        // Streaming params/returns are stubbed by the endpoint emitter,
-        // so the precise type doesn't matter at the call site — but we
-        // still need a TS placeholder that compiles.
         return TsTypeRef(
           tsType: 'unknown',
           toJsonExpr: (v) => v,
           fromJsonExpr: (v) => v,
         );
       case 'void':
-        // Endpoint emitter inspects `tsReturnInner == 'void'` and emits
-        // `() => undefined as void` for the decoder, so the to/from
-        // expressions here are unreachable in practice. Keep them
-        // identity-passes for safety.
         return TsTypeRef(
           tsType: 'void',
           toJsonExpr: (v) => v,
@@ -202,27 +202,44 @@ class TsTypeMapper {
   }
 
   TsTypeRef _mapModelOrEnum(TypeDefinition type) {
-    final qualifiedType = '$modelPrefix${type.className}';
+    final className = type.className;
 
-    // Foreign type — typically defined in a Serverpod module the
-    // project depends on (e.g. AuthSuccess from serverpod_auth_idp).
-    // v0.1.x falls back to `unknown` so the package compiles; v0.2
-    // will emit real `import type { ... } from '<module-ts-pkg>';`
-    // statements based on `TypeDefinition.url`.
-    if (projectClassNames.isNotEmpty &&
-        !projectClassNames.contains(type.className)) {
-      return TsTypeRef(
-        // The `unknown` cast keeps tsc happy and surfaces the gap to
-        // users via the IDE's hover.
-        tsType: 'unknown /* TODO(v0.2): module type ${type.className} */',
-        toJsonExpr: (v) => '$v as unknown',
-        fromJsonExpr: (v) => '$v as unknown',
-      );
+    // 1. Local project types win over the module index. If a name
+    // collides — say, an app model with the same className as a
+    // module class — the local definition is the source of truth and
+    // we must not emit cross-package imports for it. (When generating
+    // a module client, the project's own classes ARE in the module
+    // index too; this ordering keeps that case from self-importing.)
+    //
+    // We deliberately do NOT default-to-local when the set is empty:
+    // a project with zero local models that calls module endpoints
+    // would otherwise produce `p.AuthSuccess.fromJson(...)` and break
+    // tsc, since there's no local protocol barrel to namespace into.
+    if (projectClassNames.contains(className)) {
+      return _mapLocalProjectType(className);
     }
 
-    if (enumClassNames.contains(type.className)) {
-      // Enums use a sibling `<Name>Codec` object for both directions.
-      final codec = '$modelPrefix${type.className}Codec';
+    // 2. Module-defined type? Emit the bare TS name; the emitter is
+    // responsible for the matching `import { Name } from '<pkg>';`
+    // line at the top of the file.
+    if (moduleIndex.layoutFor(className) != null) {
+      return _mapModuleType(className);
+    }
+
+    // 3. Foreign + unknown — neither local nor in any module dep.
+    // Falls back to `unknown` so the package still compiles.
+    return TsTypeRef(
+      tsType: 'unknown /* TODO: unknown type $className */',
+      toJsonExpr: (v) => '$v as unknown',
+      fromJsonExpr: (v) => '$v as unknown',
+    );
+  }
+
+  TsTypeRef _mapLocalProjectType(String className) {
+    final qualifiedType = '$modelPrefix$className';
+
+    if (enumClassNames.contains(className)) {
+      final codec = '$modelPrefix${className}Codec';
       return TsTypeRef(
         tsType: qualifiedType,
         toJsonExpr: (v) => '$codec.toJson($v)',
@@ -230,17 +247,32 @@ class TsTypeMapper {
       );
     }
 
-    // Sealed bases route `fromJson` through `<Name>Base` (the abstract
-    // dispatcher); the type itself is the bare union alias. Plain
-    // classes / exceptions use `<Name>.fromJson(...)`.
-    final fromJsonReceiver = sealedClassNames.contains(type.className)
-        ? '$modelPrefix${type.className}Base'
+    final fromJsonReceiver = sealedClassNames.contains(className)
+        ? '$modelPrefix${className}Base'
         : qualifiedType;
     return TsTypeRef(
       tsType: qualifiedType,
       toJsonExpr: (v) => '$v.toJson()',
       fromJsonExpr: (v) =>
           '$fromJsonReceiver.fromJson($v as Record<string, unknown>)',
+    );
+  }
+
+  TsTypeRef _mapModuleType(String className) {
+    if (moduleIndex.isEnum(className)) {
+      return TsTypeRef(
+        tsType: className,
+        toJsonExpr: (v) => '${className}Codec.toJson($v)',
+        fromJsonExpr: (v) => '${className}Codec.fromJson($v)',
+      );
+    }
+    final receiver =
+        moduleIndex.isSealed(className) ? '${className}Base' : className;
+    return TsTypeRef(
+      tsType: className,
+      toJsonExpr: (v) => '$v.toJson()',
+      fromJsonExpr: (v) =>
+          '$receiver.fromJson($v as Record<string, unknown>)',
     );
   }
 
