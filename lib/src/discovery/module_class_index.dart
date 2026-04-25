@@ -59,12 +59,27 @@ class ModuleClassIndex {
     final sealedClassNames = <String>{};
     final enumClassNames = <String>{};
 
+    final knownModules = [
+      for (final m in discovered)
+        ModuleDependency(
+          dartPkgName: m.dartPkgName,
+          nickname: m.nickname,
+          serverPkgPath: m.serverPkgDir.path,
+        ),
+    ];
+
     for (final mod in discovered) {
       final layout = layoutResolver.resolve(mod.dartPkgName);
       // Modules typically live under the user's pub-cache, where the
       // sibling dart client package isn't present — `loadForModule`
-      // synthesises a config that bypasses that validation.
-      final ir = await ProtocolLoader.loadForModule(mod.serverPkgDir);
+      // synthesises a config that bypasses that validation. We pass
+      // the full discovered set so the synthesised config can resolve
+      // cross-module references (e.g. auth_idp's `module:auth:...`
+      // pointing at auth_core).
+      final ir = await ProtocolLoader.loadForModule(
+        mod.serverPkgDir,
+        knownModules: knownModules,
+      );
       for (final m in ir.models) {
         classToLayout[m.className] = layout;
         if (m is ModelClassDefinition && m.isSealed) {

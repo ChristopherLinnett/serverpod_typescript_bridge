@@ -1,3 +1,16 @@
+## 0.2.2
+
+- Bugfix: synthesised module configs now populate their `modules:`
+  list from the module's own `config/generator.yaml`. v0.2.1 left it
+  empty, so any module whose source references another module by
+  nickname (e.g. `serverpod_auth_idp_server` references
+  `module:auth:AuthUser` from `serverpod_auth_core_server`) failed
+  with `The referenced module "auth" is not found`. The full set of
+  discovered modules now flows through `ModuleClassIndex.build` and
+  `GenerationPipeline.run` as a `List<ModuleDependency>`, and the
+  synthesiser uses it to construct real `ModuleConfig` entries with
+  the right `serverPackageDirectoryPathParts`.
+
 ## 0.2.1
 
 - Bugfix: loading a Serverpod module's IR no longer requires the

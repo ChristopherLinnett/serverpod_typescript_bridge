@@ -13,6 +13,7 @@ import 'package:serverpod_cli/analyzer.dart';
 import 'package:serverpod_cli/src/analyzer/dart/definitions.dart'
     show EndpointDefinition;
 import 'package:serverpod_cli/src/analyzer/models/stateful_analyzer.dart';
+import 'package:serverpod_cli/src/config/config.dart' show ModuleConfig;
 import 'package:serverpod_cli/src/config/experimental_feature.dart';
 import 'package:serverpod_cli/src/config/serverpod_feature.dart';
 import 'package:serverpod_cli/src/generator/code_generation_collector.dart';
@@ -44,11 +45,35 @@ class ProtocolLoader {
   /// This builds a minimal [GeneratorConfig] from the module's own
   /// `config/generator.yaml` + `pubspec.yaml` instead, populating only
   /// the fields the IR analyzers actually consult.
+  ///
+  /// [knownModules] is the full list of modules the parent project
+  /// discovered. It's used to resolve cross-module references inside
+  /// the loaded module — e.g. `serverpod_auth_idp_server` declares
+  /// `module:auth:AuthUser` references and the `auth` nickname must
+  /// resolve to `serverpod_auth_core_server`'s server-pkg dir or the
+  /// analyzer fails with `The referenced module "auth" is not found`.
   static Future<ProtocolDefinition> loadForModule(
-    Directory serverDirectory,
+    Directory serverDirectory, {
+    List<ModuleDependency> knownModules = const [],
+  }) async {
+    _ensureExperimentalFeaturesInitialised();
+    final config = _synthesizeModuleConfig(
+      serverDirectory,
+      knownModules: knownModules,
+    );
+    return _runAnalyses(config);
+  }
+
+  /// Runs the same model + endpoint analyses as [load] / [loadForModule]
+  /// but against an already-built [config]. Useful when the caller has
+  /// synthesised a config out-of-band (e.g. [GenerationPipeline.run] in
+  /// module mode) and wants to reuse it for both emission AND IR loading
+  /// — a single read of `pubspec.yaml` + `config/generator.yaml`, no
+  /// risk of the two halves seeing different on-disk state.
+  static Future<ProtocolDefinition> loadFromConfig(
+    GeneratorConfig config,
   ) async {
     _ensureExperimentalFeaturesInitialised();
-    final config = _synthesizeModuleConfig(serverDirectory);
     return _runAnalyses(config);
   }
 
@@ -65,16 +90,24 @@ class ProtocolLoader {
   /// Public sibling of [loadForModule]: builds the same synthesised
   /// [GeneratorConfig] for callers that need the config object directly
   /// (e.g. the generation pipeline, which threads it into emitters).
-  static GeneratorConfig synthesizeModuleConfig(Directory serverDirectory) =>
-      _synthesizeModuleConfig(serverDirectory);
+  static GeneratorConfig synthesizeModuleConfig(
+    Directory serverDirectory, {
+    List<ModuleDependency> knownModules = const [],
+  }) =>
+      _synthesizeModuleConfig(serverDirectory, knownModules: knownModules);
 
   /// Reads the module's `pubspec.yaml` (for the package name) and
   /// `config/generator.yaml` (for the client-path declaration) and
   /// builds a [GeneratorConfig] without any cross-package validation.
   ///
   /// The dart client fields are placeholders — we never emit a dart
-  /// client for the module, so they're never read.
-  static GeneratorConfig _synthesizeModuleConfig(Directory serverDirectory) {
+  /// client for the module, so they're never read. The `modules:`
+  /// list is populated from the module's own `modules:` block in
+  /// `generator.yaml`, cross-referenced against [knownModules].
+  static GeneratorConfig _synthesizeModuleConfig(
+    Directory serverDirectory, {
+    required List<ModuleDependency> knownModules,
+  }) {
     final dirParts = p.split(serverDirectory.path);
     final pubspecName = _readPubspecName(serverDirectory);
     final generatorYaml = _readGeneratorYaml(serverDirectory);
@@ -91,7 +124,7 @@ class ProtocolLoader {
       serverPackageDirectoryPathParts: dirParts,
       sharedModelsSourcePathsParts: const {},
       relativeDartClientPackagePathParts: p.split(clientPath),
-      modules: const [],
+      modules: _moduleDependenciesFor(generatorYaml, knownModules),
       extraClasses: const [],
       enabledFeatures: ServerpodFeature.values
           .where((f) => f.defaultValue)
@@ -99,6 +132,51 @@ class ProtocolLoader {
       databaseDialect: DatabaseDialect.postgres,
     );
   }
+
+  /// Builds [ModuleConfig] entries for every module this module
+  /// declares as a dep in its own `generator.yaml`. The [knownModules]
+  /// list (every Serverpod module the PARENT project discovered)
+  /// supplies the on-disk path each entry needs.
+  ///
+  /// Modules referenced in generator.yaml but NOT in [knownModules]
+  /// are skipped silently — the analyzer will surface the missing
+  /// reference if the module's source actually depends on them.
+  static List<ModuleConfig> _moduleDependenciesFor(
+    YamlMap generatorYaml,
+    List<ModuleDependency> knownModules,
+  ) {
+    final modulesNode = generatorYaml['modules'];
+    if (modulesNode is! YamlMap) return const [];
+
+    // Index discovered modules by their `<name-without-_server>`,
+    // matching how generator.yaml's `modules:` block names them.
+    final knownByBase = <String, ModuleDependency>{
+      for (final m in knownModules) _stripServerSuffix(m.dartPkgName): m,
+    };
+
+    final out = <ModuleConfig>[];
+    for (final entry in modulesNode.entries) {
+      final base = entry.key;
+      final spec = entry.value;
+      if (base is! String) continue;
+      final known = knownByBase[base];
+      if (known == null) continue;
+      final nickname = (spec is YamlMap && spec['nickname'] is String)
+          ? spec['nickname'] as String
+          : known.nickname;
+      out.add(ModuleConfig(
+        type: PackageType.module,
+        name: base,
+        nickname: nickname,
+        migrationVersions: const [],
+        serverPackageDirectoryPathParts: p.split(known.serverPkgPath),
+      ));
+    }
+    return out;
+  }
+
+  static String _stripServerSuffix(String pkg) =>
+      pkg.endsWith('_server') ? pkg.substring(0, pkg.length - '_server'.length) : pkg;
 
   static String _readPubspecName(Directory serverDirectory) {
     final pubspec = File(p.join(serverDirectory.path, 'pubspec.yaml'));
@@ -109,7 +187,10 @@ class ProtocolLoader {
         'Cannot determine module name.',
       );
     }
-    final yaml = loadYaml(pubspec.readAsStringSync());
+    final yaml = _safeLoadYaml(
+      pubspec,
+      context: 'module pubspec.yaml',
+    );
     if (yaml is! YamlMap || yaml['name'] is! String) {
       throw ProtocolLoaderException._(
         ProtocolLoaderPhase.config,
@@ -125,8 +206,47 @@ class ProtocolLoader {
       p.join(serverDirectory.path, 'config', 'generator.yaml'),
     );
     if (!file.existsSync()) return YamlMap();
-    final yaml = loadYaml(file.readAsStringSync());
+    final yaml = _safeLoadYaml(
+      file,
+      context: 'module config/generator.yaml',
+    );
     return yaml is YamlMap ? yaml : YamlMap();
+  }
+
+  /// Reads + parses a YAML file, translating any `YamlException` /
+  /// `FileSystemException` / `FormatException` into a typed
+  /// [ProtocolLoaderException] with [ProtocolLoaderPhase.config] so the
+  /// CLI surfaces a consistent error class instead of leaking raw
+  /// parser exceptions. Stack trace preserved via
+  /// [Error.throwWithStackTrace].
+  static dynamic _safeLoadYaml(File file, {required String context}) {
+    try {
+      return loadYaml(file.readAsStringSync());
+    } on YamlException catch (e, st) {
+      Error.throwWithStackTrace(
+        ProtocolLoaderException._(
+          ProtocolLoaderPhase.config,
+          'Failed to parse $context at ${file.path}: ${e.message}',
+        ),
+        st,
+      );
+    } on FileSystemException catch (e, st) {
+      Error.throwWithStackTrace(
+        ProtocolLoaderException._(
+          ProtocolLoaderPhase.config,
+          'Failed to read $context at ${file.path}: ${e.message}',
+        ),
+        st,
+      );
+    } on FormatException catch (e, st) {
+      Error.throwWithStackTrace(
+        ProtocolLoaderException._(
+          ProtocolLoaderPhase.config,
+          'Failed to parse $context at ${file.path}: ${e.message}',
+        ),
+        st,
+      );
+    }
   }
 
   static bool _experimentalFeaturesInitialised = false;
@@ -214,4 +334,31 @@ class ProtocolLoaderException implements Exception {
   @override
   String toString() =>
       'ProtocolLoaderException[${phase.name}]: $message';
+}
+
+/// Minimal description of a discovered Serverpod module — passed into
+/// [ProtocolLoader.loadForModule] / [ProtocolLoader.synthesizeModuleConfig]
+/// so the synthesised [GeneratorConfig] can resolve cross-module
+/// references (e.g. `module:auth:AuthUser`).
+///
+/// Decoupled from the richer `DiscoveredModule` class in
+/// `discovery/module_discoverer.dart` to keep `protocol_loader.dart`
+/// from depending on the discovery layer (which depends on this file
+/// transitively for IR loading).
+class ModuleDependency {
+  const ModuleDependency({
+    required this.dartPkgName,
+    required this.nickname,
+    required this.serverPkgPath,
+  });
+
+  /// Dart package name as seen in `package_config.json`
+  /// (e.g. `serverpod_auth_core_server`).
+  final String dartPkgName;
+
+  /// The wire / generator.yaml nickname (e.g. `auth`).
+  final String nickname;
+
+  /// Absolute on-disk path to the module's server package directory.
+  final String serverPkgPath;
 }

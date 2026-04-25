@@ -115,6 +115,15 @@ class GenerateCommand extends Command<int> {
       layoutResolver: layoutResolver,
     );
 
+    final knownModules = [
+      for (final m in discovered)
+        ModuleDependency(
+          dartPkgName: m.dartPkgName,
+          nickname: m.nickname,
+          serverPkgPath: m.serverPkgDir.path,
+        ),
+    ];
+
     // 2. Generate each discovered module FIRST so the app client can
     //    declare `file:..` deps that resolve cleanly.
     for (final mod in discovered) {
@@ -129,6 +138,7 @@ class GenerateCommand extends Command<int> {
           outputDir: layout.outputDir,
           moduleIndex: moduleIndex,
           isModulePackage: true,
+          knownModules: knownModules,
         );
       } catch (e) {
         stderr.writeln(
