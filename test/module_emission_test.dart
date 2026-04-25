@@ -4,7 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 /// Verifies that `generate` against a Serverpod *module* (`type: module`
-/// in generator.yaml) emits a `<Nickname>Caller extends
+/// in generator.yaml) emits a `[Nickname]Caller extends
 /// ModuleEndpointCaller` instead of a top-level `Client`.
 void main() {
   final packageRoot = Directory.current.path;
