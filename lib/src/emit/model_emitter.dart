@@ -30,19 +30,28 @@ class ModelEmitter {
   /// Emits every model in [models], plus a `protocol/index.ts` barrel
   /// re-exporting them all. Sealed bases get an extra discriminated-union
   /// type alias and a static `fromJson` that dispatches on `__className__`.
-  /// Returns the list of emitted basenames (without the `.ts` suffix),
-  /// in alphabetical order.
+  /// Returns the list of emitted filenames (with the `.ts` suffix),
+  /// in alphabetical order — the barrel writer strips `.ts`.
   List<String> emitAll(List<SerializableModelDefinition> models) {
     final modelClasses = models.whereType<ModelClassDefinition>().toList();
     final classByName = {for (final m in modelClasses) m.className: m};
-    final subclassesBySealedParent = <String, List<ModelClassDefinition>>{};
+    // For each concrete subclass, collect EVERY sealed ancestor up the
+    // chain — not just the nearest. This keeps multi-level hierarchies
+    // (`sealed A → sealed B → concrete C`) correct: A's dispatch
+    // includes C as well as B.
+    final subclassesBySealedAncestor =
+        <String, List<ModelClassDefinition>>{};
     for (final m in modelClasses) {
-      final sealedAncestor = _sealedAncestorName(m, classByName);
-      if (sealedAncestor != null && sealedAncestor != m.className) {
-        subclassesBySealedParent
-            .putIfAbsent(sealedAncestor, () => [])
+      if (m.isSealed) continue;
+      for (final ancestor in _sealedAncestorChain(m, classByName)) {
+        subclassesBySealedAncestor
+            .putIfAbsent(ancestor, () => [])
             .add(m);
       }
+    }
+    // Stable ordering across runs (helps goldens + diff stability).
+    for (final list in subclassesBySealedAncestor.values) {
+      list.sort((a, b) => a.className.compareTo(b.className));
     }
 
     final emitted = <String>[];
@@ -51,12 +60,12 @@ class ModelEmitter {
         if (model.isSealed) {
           emitted.add(_emitSealedBase(
             model,
-            subclassesBySealedParent[model.className] ?? const [],
+            subclassesBySealedAncestor[model.className] ?? const [],
           ));
         } else {
           emitted.add(_emitClass(
             model,
-            sealedAncestor: _sealedAncestorName(model, classByName),
+            sealedAncestor: _nearestSealedAncestorName(model, classByName),
           ));
         }
       } else if (model is ExceptionClassDefinition) {
@@ -70,21 +79,26 @@ class ModelEmitter {
     return emitted;
   }
 
-  /// Walks the inheritance chain looking for the nearest sealed ancestor,
-  /// or returns null if there isn't one. Includes the model itself if it
-  /// is sealed.
-  String? _sealedAncestorName(
+  /// Walks up from [model], yielding every sealed ancestor (not including
+  /// `model` itself) in order from nearest to outermost.
+  Iterable<String> _sealedAncestorChain(
+    ModelClassDefinition model,
+    Map<String, ModelClassDefinition> byName,
+  ) sync* {
+    ModelClassDefinition? cursor = byName[model.parentClass?.className];
+    while (cursor != null) {
+      if (cursor.isSealed) yield cursor.className;
+      cursor = byName[cursor.parentClass?.className];
+    }
+  }
+
+  /// Returns the nearest sealed ancestor's name (or null) — used to
+  /// decide what concrete subclasses extend at the TS level.
+  String? _nearestSealedAncestorName(
     ModelClassDefinition model,
     Map<String, ModelClassDefinition> byName,
   ) {
-    ModelClassDefinition? cursor = model;
-    while (cursor != null) {
-      if (cursor.isSealed) return cursor.className;
-      final parent = cursor.parentClass;
-      if (parent == null) return null;
-      cursor = byName[parent.className];
-    }
-    return null;
+    return _sealedAncestorChain(model, byName).firstOrNull;
   }
 
   void _emitProtocolBarrel(List<String> filenames) {
@@ -158,10 +172,13 @@ class ModelEmitter {
   }) {
     final w = TsWriter()
       ..writeRaw(_generatedHeader)
-      ..writeln(
-        "import * as r from '../runtime/index.js';",
-      )
-      ..blankLine();
+      ..writeln("import * as r from '../runtime/index.js';");
+    if (sealedAncestor != null) {
+      w.writeln(
+        "import { ${sealedAncestor}Base } from './${_filenameStemOf(sealedAncestor)}.js';",
+      );
+    }
+    w.blankLine();
 
     final fields = model.fields
         .where((f) => f.shouldIncludeField(false /* serverCode */))
@@ -169,9 +186,6 @@ class ModelEmitter {
 
     w.docComment(model.documentation?.join('\n'));
     if (sealedAncestor != null) {
-      w.writeln(
-        "import { ${sealedAncestor}Base } from './${_filenameStemOf(sealedAncestor)}.js';",
-      );
       w.writeln(
         'export class ${model.className} extends ${sealedAncestor}Base implements r.SerializableModel {',
       );
@@ -262,11 +276,22 @@ class ModelEmitter {
         w.writeln('return new ${model.className}({');
         w.indent(() {
           for (final field in fields) {
-            // Use `??` for non-nullable fields; for nullables, let the
-            // explicit-null case fall through (caller must use partial).
-            w.writeln(
-              '${field.name}: partial.${field.name} ?? this.${field.name},',
-            );
+            if (field.type.nullable) {
+              // Nullable fields honour `null` as a value: caller must
+              // be able to clear the field by passing `{ field: null }`.
+              // Distinguish "not in partial" from "in partial as null"
+              // via the `'field' in partial` check.
+              w.writeln(
+                '${field.name}: '
+                "'${field.name}' in partial "
+                '? (partial.${field.name} ?? null) '
+                ': this.${field.name},',
+              );
+            } else {
+              w.writeln(
+                '${field.name}: partial.${field.name} ?? this.${field.name},',
+              );
+            }
           }
         });
         w.writeln('});');

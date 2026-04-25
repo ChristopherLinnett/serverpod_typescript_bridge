@@ -35,7 +35,9 @@ class TsTypeMapper {
   TsTypeMapper({
     this.modelPrefix = '',
     Set<String>? sealedClassNames,
-  }) : sealedClassNames = sealedClassNames ?? const {};
+    Set<String>? enumClassNames,
+  })  : sealedClassNames = sealedClassNames ?? const {},
+        enumClassNames = enumClassNames ?? const {};
 
   final String modelPrefix;
 
@@ -43,6 +45,13 @@ class TsTypeMapper {
   /// types still use the bare name (the discriminated-union alias), but
   /// `fromJson` routes through `<Name>Base` (the abstract dispatcher).
   final Set<String> sealedClassNames;
+
+  /// Class names that were emitted as TS enums. The model emitter uses
+  /// a sibling `<Name>Codec` object for `toJson`/`fromJson`, so the
+  /// generated expressions for enum-typed fields must call
+  /// `<Name>Codec.toJson(value)` and `<Name>Codec.fromJson(json)`
+  /// instead of `<value>.toJson()` / `<Name>.fromJson(json)`.
+  final Set<String> enumClassNames;
 
   TsTypeRef map(TypeDefinition type) {
     final base = _mapInner(type);
@@ -171,11 +180,21 @@ class TsTypeMapper {
   }
 
   TsTypeRef _mapModelOrEnum(TypeDefinition type) {
-    // Models, enums, exceptions, and other project types are emitted
-    // by ModelEmitter under the same className. Sealed bases route
-    // `fromJson` through `<Name>Base` (the abstract dispatcher); the
-    // type itself is the bare union alias.
     final qualifiedType = '$modelPrefix${type.className}';
+
+    if (enumClassNames.contains(type.className)) {
+      // Enums use a sibling `<Name>Codec` object for both directions.
+      final codec = '$modelPrefix${type.className}Codec';
+      return TsTypeRef(
+        tsType: qualifiedType,
+        toJsonExpr: (v) => '$codec.toJson($v)',
+        fromJsonExpr: (v) => '$codec.fromJson($v)',
+      );
+    }
+
+    // Sealed bases route `fromJson` through `<Name>Base` (the abstract
+    // dispatcher); the type itself is the bare union alias. Plain
+    // classes / exceptions use `<Name>.fromJson(...)`.
     final fromJsonReceiver = sealedClassNames.contains(type.className)
         ? '$modelPrefix${type.className}Base'
         : qualifiedType;
