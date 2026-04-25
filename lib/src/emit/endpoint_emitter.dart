@@ -5,7 +5,9 @@ import 'package:path/path.dart' as p;
 import 'package:serverpod_cli/analyzer.dart';
 import 'package:serverpod_cli/src/analyzer/dart/definitions.dart';
 
+import '../analyzer/ir_walker.dart';
 import 'generated_file_tracker.dart';
+import 'module_import_lines.dart';
 import 'ts_type_mapper.dart';
 import 'ts_writer.dart';
 
@@ -27,6 +29,9 @@ class EndpointEmitter {
   final Directory outputDir;
   final GeneratedFileTracker tracker;
   final TsTypeMapper mapper;
+
+  late final ModuleImportLines _moduleImports =
+      ModuleImportLines(mapper.moduleIndex);
 
   /// Emits every concrete endpoint in [endpoints]. Returns the list of
   /// emitted basenames (without the `.ts` suffix), in alphabetical order.
@@ -54,8 +59,13 @@ class EndpointEmitter {
     final w = TsWriter()
       ..writeRaw(_generatedHeader)
       ..writeln("import * as r from '../runtime/index.js';")
-      ..writeln("import * as p from '../protocol/index.js';")
-      ..blankLine();
+      ..writeln("import * as p from '../protocol/index.js';");
+    final moduleImports =
+        _moduleImports.forTypes(IrWalker.endpointTypeRefs(ep));
+    for (final line in moduleImports) {
+      w.writeln(line);
+    }
+    w.blankLine();
 
     final className = 'Endpoint${_pascalCase(ep.name)}';
 

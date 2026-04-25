@@ -17,6 +17,7 @@ class ScaffoldEmitter {
     required this.outputPaths,
     required this.tracker,
     this.additionalBarrelExports = const [],
+    this.moduleDependencies = const {},
   });
 
   final OutputPaths outputPaths;
@@ -25,6 +26,11 @@ class ScaffoldEmitter {
   /// Extra re-exports the barrel `src/index.ts` should include beyond
   /// the runtime — e.g. `./protocol/index.js` once model emission lands.
   final List<String> additionalBarrelExports;
+
+  /// Maps npm package name → version-or-url string (typically
+  /// `file:..` for sibling-generated module clients). Each entry
+  /// becomes one `dependencies:` line in the generated `package.json`.
+  final Map<String, String> moduleDependencies;
 
   Future<void> emit() async {
     outputPaths.outputDir.createSync(recursive: true);
@@ -105,6 +111,9 @@ class ScaffoldEmitter {
   }
 
   String _packageJsonContent() {
+    final depsBlock = moduleDependencies.isEmpty
+        ? ''
+        : '  "dependencies": ${_formatDeps(moduleDependencies)},\n';
     return '''
 {
   "name": "${outputPaths.packageName}",
@@ -124,11 +133,21 @@ class ScaffoldEmitter {
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
-  "devDependencies": {
+$depsBlock  "devDependencies": {
     "typescript": "^5.4.0"
   }
 }
 ''';
+  }
+
+  /// Inline the deps map as a stable, alphabetised JSON object.
+  String _formatDeps(Map<String, String> deps) {
+    final keys = deps.keys.toList()..sort();
+    final lines = <String>[];
+    for (final k in keys) {
+      lines.add('    "$k": "${deps[k]}"');
+    }
+    return '{\n${lines.join(',\n')}\n  }';
   }
 
   String _tsconfigContent() {
