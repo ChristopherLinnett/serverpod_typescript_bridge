@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  dart:
+    name: Dart suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.11.4
+
+      - name: Pub get (host package)
+        run: dart pub get
+
+      - name: Pub get (sample_server fixture workspace)
+        run: dart pub get
+        working-directory: test/fixtures/sample_server
+
+      - name: Pub get (sample_module fixture workspace)
+        run: dart pub get
+        working-directory: test/fixtures/sample_module
+
+      - name: Setup Node (for the runtime npm install needed by the e2e tsc check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: npm install (TypeScript runtime)
+        run: npm install
+        working-directory: lib/runtime/typescript
+
+      - name: dart analyze
+        run: dart analyze
+
+      - name: dart test
+        run: dart test --reporter expanded
+
+  typescript:
+    name: TypeScript runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: lib/runtime/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
