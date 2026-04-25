@@ -1,3 +1,16 @@
+## 0.2.4
+
+- Ergonomics: nullable model and exception fields are now OMITTABLE on
+  the constructor's `init: {...}` bag. Callers can write
+  `new GetJoinedDivesRequest({ isCompleted: false, count: 10 })` instead
+  of having to pad every nullable field with `null`. Omitted fields
+  default to `null` at construction so the runtime field type stays
+  honest at `T | null`. Non-nullable fields stay required.
+  Endpoint named params already accepted omission for optional Dart
+  params (`?:` shape) — this only changes model + exception
+  constructors, where the previous required-property emission forced
+  callers to pass `null` repeatedly.
+
 ## 0.2.3
 
 - Bugfix: when generating a module client (`serverpod_auth_core`,

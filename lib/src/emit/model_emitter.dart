@@ -296,18 +296,29 @@ class ModelEmitter {
       }
       w.blankLine();
 
+      // Nullable fields are emitted as optional properties on the
+      // constructor's init bag (`name?: T | null`) so callers don't
+      // have to pad with `null` for every nullable field. The body
+      // defaults omitted-or-undefined to `null` so the runtime field
+      // type stays honest at `T | null`. Non-nullable fields stay
+      // required — they have no meaningful default.
       w.writeln('constructor(init: {');
       w.indent(() {
         for (final field in fields) {
           final type = mapper.map(field.type);
-          w.writeln('${field.name}: ${type.tsType};');
+          final maybe = field.type.nullable ? '?' : '';
+          w.writeln('${field.name}$maybe: ${type.tsType};');
         }
       });
       w.writeln('}) {');
       w.indent(() {
         if (sealedAncestor != null) w.writeln('super();');
         for (final field in fields) {
-          w.writeln('this.${field.name} = init.${field.name};');
+          if (field.type.nullable) {
+            w.writeln('this.${field.name} = init.${field.name} ?? null;');
+          } else {
+            w.writeln('this.${field.name} = init.${field.name};');
+          }
         }
       });
       w.writeln('}');
@@ -419,11 +430,16 @@ class ModelEmitter {
       }
       w.blankLine();
 
+      // Same nullable-fields-are-optional treatment as `_emitClass`:
+      // callers can omit nullable fields and they default to `null`,
+      // so building an exception with only the message+a couple of
+      // populated fields stays one line.
       w.writeln('constructor(init: {');
       w.indent(() {
         for (final field in fields) {
           final type = mapper.map(field.type);
-          w.writeln('${field.name}: ${type.tsType};');
+          final maybe = field.type.nullable ? '?' : '';
+          w.writeln('${field.name}$maybe: ${type.tsType};');
         }
       });
       w.writeln('}) {');
@@ -436,7 +452,11 @@ class ModelEmitter {
         }
         w.writeln("this.name = '${model.className}';");
         for (final field in fields) {
-          w.writeln('this.${field.name} = init.${field.name};');
+          if (field.type.nullable) {
+            w.writeln('this.${field.name} = init.${field.name} ?? null;');
+          } else {
+            w.writeln('this.${field.name} = init.${field.name};');
+          }
         }
       });
       w.writeln('}');
