@@ -50,10 +50,17 @@ class ProtocolLoader {
   }
 
   static Future<GeneratorConfig> _loadConfig(Directory serverDirectory) async {
-    return GeneratorConfig.load(
-      serverRootDir: serverDirectory.path,
-      interactive: false,
-    );
+    try {
+      return await GeneratorConfig.load(
+        serverRootDir: serverDirectory.path,
+        interactive: false,
+      );
+    } catch (e) {
+      throw ProtocolLoaderException._(
+        ProtocolLoaderPhase.config,
+        'Failed to load GeneratorConfig from ${serverDirectory.path}: $e',
+      );
+    }
   }
 
   static Future<List<SerializableModelDefinition>> _runModelAnalysis(

@@ -89,8 +89,12 @@ class GenerateCommand extends Command<int> {
       return 70;
     }
 
+    // Tracker is scoped to ONLY generator-owned subdirectories so a
+    // user's hand-written `.ts` helper under `src/` never gets swept.
     final tracker = GeneratedFileTracker([
-      Directory(p.join(paths.outputDir.path, 'src')),
+      Directory(p.join(paths.outputDir.path, 'src', 'runtime')),
+      Directory(p.join(paths.outputDir.path, 'src', 'protocol')),
+      Directory(p.join(paths.outputDir.path, 'src', 'endpoints')),
     ]);
 
     final scaffold = ScaffoldEmitter(

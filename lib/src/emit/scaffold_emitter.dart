@@ -74,7 +74,9 @@ class ScaffoldEmitter {
       final relativePath = p.relative(entity.path, from: runtimeSrc.path);
       final destFile = File(p.join(destDir.path, relativePath));
       destFile.parent.createSync(recursive: true);
-      destFile.writeAsStringSync(entity.readAsStringSync());
+      // Byte-level copy keeps the runtime truly verbatim — no BOM,
+      // line-ending, or encoding drift if the source file has them.
+      entity.copySync(destFile.path);
       tracker.recordWrite(destFile);
     }
   }

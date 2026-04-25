@@ -61,7 +61,7 @@ void main() {
       final src = await _readServerFile('lib/src/endpoints/primitives_endpoint.dart');
       for (final type in const [
         'int', 'double', 'String', 'bool',
-        'DateTime', 'Duration', 'BigInt', 'UuidValue',
+        'DateTime', 'Duration', 'BigInt', 'UuidValue', 'ByteData',
       ]) {
         expect(src, contains(type), reason: 'expected primitive type: $type');
       }

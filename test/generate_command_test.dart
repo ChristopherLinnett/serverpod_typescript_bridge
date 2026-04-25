@@ -61,7 +61,7 @@ void main() {
           'typescript',
           'node_modules',
           '.bin',
-          'tsc',
+          Platform.isWindows ? 'tsc.cmd' : 'tsc',
         ));
         if (!tscBinary.existsSync()) {
           printOnFailure(

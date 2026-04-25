@@ -54,14 +54,22 @@ class ServerDirectoryFinder {
   }
 
   // Reads + parses pubspec.yaml at every directory the walk visits. On a
-  // deep path that's O(depth) syncronous reads; in practice always single
+  // deep path that's O(depth) synchronous reads; in practice always single
   // digits. If a future caller needs a faster walk (e.g. an LSP server
   // with many starts), extract a `PubspecPredicate` interface so a
   // pre-parsed pubspec can be passed in.
   static bool _isServerDirectory(Directory dir) {
     final pubspec = File(p.join(dir.path, 'pubspec.yaml'));
     if (!pubspec.existsSync()) return false;
-    final yaml = loadYaml(pubspec.readAsStringSync());
+    final dynamic yaml;
+    try {
+      yaml = loadYaml(pubspec.readAsStringSync());
+    } catch (_) {
+      // An invalid pubspec.yaml on the walk path means "not a Serverpod
+      // server" — keep walking. Don't let a malformed yaml in a parent
+      // directory blow up the whole search.
+      return false;
+    }
     if (yaml is! YamlMap) return false;
     if (yaml['name'] == 'serverpod') return true;
     final deps = yaml['dependencies'];
