@@ -43,10 +43,6 @@ void main() {
           reason: 'module client should sit next to the app client',
         );
         expect(layout.npmPackageName, 'serverpod_auth_idp_typescript_client');
-        expect(
-          layout.relativeFromAppClient,
-          '../serverpod_auth_idp_typescript_client',
-        );
       },
     );
 

@@ -204,42 +204,33 @@ class TsTypeMapper {
   TsTypeRef _mapModelOrEnum(TypeDefinition type) {
     final className = type.className;
 
-    // 1. Module-defined type? Emit the bare TS name; the emitter is
+    // 1. Local project types win over the module index. If a name
+    // collides — say, an app model with the same className as a
+    // module class — the local definition is the source of truth and
+    // we must not emit cross-package imports for it. (When generating
+    // a module client, the project's own classes ARE in the module
+    // index too; this ordering keeps that case from self-importing.)
+    final isLocal = projectClassNames.isEmpty ||
+        projectClassNames.contains(className);
+    if (isLocal) return _mapLocalProjectType(className);
+
+    // 2. Module-defined type? Emit the bare TS name; the emitter is
     // responsible for the matching `import { Name } from '<pkg>';`
     // line at the top of the file.
     if (moduleIndex.layoutFor(className) != null) {
-      if (moduleIndex.isEnum(className)) {
-        return TsTypeRef(
-          tsType: className,
-          toJsonExpr: (v) => '${className}Codec.toJson($v)',
-          fromJsonExpr: (v) => '${className}Codec.fromJson($v)',
-        );
-      }
-      final receiver = moduleIndex.isSealed(className)
-          ? '${className}Base'
-          : className;
-      return TsTypeRef(
-        tsType: className,
-        toJsonExpr: (v) => '$v.toJson()',
-        fromJsonExpr: (v) =>
-            '$receiver.fromJson($v as Record<string, unknown>)',
-      );
+      return _mapModuleType(className);
     }
 
-    // 2. Foreign + unknown — neither local nor in any module dep.
+    // 3. Foreign + unknown — neither local nor in any module dep.
     // Falls back to `unknown` so the package still compiles.
-    if (projectClassNames.isNotEmpty &&
-        !projectClassNames.contains(className)) {
-      return TsTypeRef(
-        tsType: 'unknown /* TODO: unknown type $className */',
-        toJsonExpr: (v) => '$v as unknown',
-        fromJsonExpr: (v) => '$v as unknown',
-      );
-    }
+    return TsTypeRef(
+      tsType: 'unknown /* TODO: unknown type $className */',
+      toJsonExpr: (v) => '$v as unknown',
+      fromJsonExpr: (v) => '$v as unknown',
+    );
+  }
 
-    // 3. Local project type. Apply modelPrefix so endpoint files can
-    // namespace these (`p.UserProfile`) while model files use bare
-    // names.
+  TsTypeRef _mapLocalProjectType(String className) {
     final qualifiedType = '$modelPrefix$className';
 
     if (enumClassNames.contains(className)) {
@@ -259,6 +250,24 @@ class TsTypeMapper {
       toJsonExpr: (v) => '$v.toJson()',
       fromJsonExpr: (v) =>
           '$fromJsonReceiver.fromJson($v as Record<string, unknown>)',
+    );
+  }
+
+  TsTypeRef _mapModuleType(String className) {
+    if (moduleIndex.isEnum(className)) {
+      return TsTypeRef(
+        tsType: className,
+        toJsonExpr: (v) => '${className}Codec.toJson($v)',
+        fromJsonExpr: (v) => '${className}Codec.fromJson($v)',
+      );
+    }
+    final receiver =
+        moduleIndex.isSealed(className) ? '${className}Base' : className;
+    return TsTypeRef(
+      tsType: className,
+      toJsonExpr: (v) => '$v.toJson()',
+      fromJsonExpr: (v) =>
+          '$receiver.fromJson($v as Record<string, unknown>)',
     );
   }
 

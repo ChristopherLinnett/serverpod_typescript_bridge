@@ -120,6 +120,20 @@ void main() {
     );
   });
 
+  test('skips the project itself when it is module-typed (no self-discovery)',
+      () {
+    scaffoldWorkspace(packages: [
+      // The "app" being generated IS itself a module.
+      (name: 'self_module', type: 'module', nickname: 'selfmod'),
+      (name: 'other_module', type: 'module', nickname: 'other'),
+    ]);
+    final modules = ModuleDiscoverer.discover(
+      Directory(p.join(tempRoot.path, 'self_module')),
+    );
+    expect(modules.length, 1);
+    expect(modules.single.dartPkgName, 'other_module');
+  });
+
   test('skips modules whose generator.yaml lacks a nickname', () {
     scaffoldWorkspace(packages: [
       (name: 'app_server', type: 'server', nickname: null),

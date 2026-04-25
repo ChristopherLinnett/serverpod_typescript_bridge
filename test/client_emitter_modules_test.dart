@@ -35,7 +35,6 @@ void main() {
       dartPkgName: dartPkg,
       outputDir: Directory('/tmp/$npmName'),
       npmPackageName: npmName,
-      relativeFromAppClient: '../$npmName',
     );
   }
 

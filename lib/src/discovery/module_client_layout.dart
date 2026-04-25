@@ -7,12 +7,17 @@ import 'package:yaml/yaml.dart';
 
 /// Where one module's generated TS client lives, and what the rest of
 /// the codebase calls it.
+///
+/// The relative path used in `file:..` package.json deps is computed
+/// fresh by [ModuleClassIndex.referencedPackages] from the consuming
+/// directory — that way module clients can depend on each other (or
+/// on themselves through alternate paths) without a hard-coded
+/// app-relative path going stale.
 class ModuleClientLayout {
   ModuleClientLayout({
     required this.dartPkgName,
     required this.outputDir,
     required this.npmPackageName,
-    required this.relativeFromAppClient,
   });
 
   /// The Dart module's pkg name (e.g. `serverpod_auth_idp_server`).
@@ -24,11 +29,6 @@ class ModuleClientLayout {
   /// The `name` field that goes in the module client's `package.json`.
   /// Must match the file: dep entry the app client declares.
   final String npmPackageName;
-
-  /// The relative path the app client's `package.json` uses (e.g.
-  /// `../serverpod_auth_idp_typescript_client`). Used for `file:..`
-  /// dependency resolution.
-  final String relativeFromAppClient;
 
   @override
   String toString() => 'ModuleClientLayout($dartPkgName → '
@@ -75,16 +75,10 @@ class ModuleLayoutResolver {
 
     final npmName = override?.npmName ?? defaultDirName;
 
-    final relativeFromAppClient = p.relative(
-      outputDir.path,
-      from: appClientOutputDir.path,
-    );
-
     return ModuleClientLayout(
       dartPkgName: dartPkgName,
       outputDir: outputDir,
       npmPackageName: npmName,
-      relativeFromAppClient: relativeFromAppClient,
     );
   }
 

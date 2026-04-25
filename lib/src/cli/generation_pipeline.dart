@@ -43,17 +43,23 @@ class GenerationPipeline {
       Directory(p.join(outputDir.path, 'src', 'endpoints')),
     ]);
 
+    final mapperConfig = _MapperConfig.fromIr(ir, moduleIndex);
+
+    // Local types always shadow the module index — see
+    // `TsTypeMapper._mapModelOrEnum`. Filter them out before we ask
+    // the index for `file:..` deps or protocol-switch entries; they
+    // belong to THIS package, not to a sibling module.
+    final localNames = mapperConfig.projectClassNames;
     final referencedClassNames = IrWalker.allReferencedClassNames(ir);
+    final referencedExternalNames = referencedClassNames.difference(localNames);
+
     final moduleDeps = moduleIndex.referencedPackages(
-      referencedClassNames: referencedClassNames,
-      appClientDir: outputDir,
+      referencedClassNames: referencedExternalNames,
+      consumerDir: outputDir,
     );
 
-    // Restrict the protocol-switch helper to only the referenced names
-    // that genuinely live in a module — anything else stays project-local
-    // (or is foreign and falls through to `undefined`).
     final referencedModuleClassNames = <String>{
-      for (final name in referencedClassNames)
+      for (final name in referencedExternalNames)
         if (moduleIndex.layoutFor(name) != null) name,
     };
 
@@ -69,8 +75,6 @@ class GenerationPipeline {
       moduleDependencies: moduleDeps,
     );
     await scaffold.emit();
-
-    final mapperConfig = _MapperConfig.fromIr(ir, moduleIndex);
 
     ModelEmitter(
       outputDir: outputDir,

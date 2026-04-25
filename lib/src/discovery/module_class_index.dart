@@ -2,6 +2,7 @@
 import 'dart:io';
 
 import 'package:meta/meta.dart';
+import 'package:path/path.dart' as p;
 import 'package:serverpod_cli/analyzer.dart';
 
 import '../analyzer/protocol_loader.dart';
@@ -85,19 +86,37 @@ class ModuleClassIndex {
   bool isSealed(String className) => _sealedClassNames.contains(className);
   bool isEnum(String className) => _enumClassNames.contains(className);
 
-  /// All className → npmPackageName entries, deduplicated by package.
-  /// Used by the scaffold emitter to write the right `file:..` deps
-  /// into the consuming package's `package.json`.
+  /// All `npmPackageName → "file:<relative-path>"` entries the
+  /// consuming package needs to declare in its `package.json`,
+  /// deduplicated by package.
+  ///
+  /// The relative path is computed fresh from [consumerDir] →
+  /// the module's `outputDir` and forced to posix slashes — npm
+  /// expects forward slashes in `file:` deps even on Windows. This
+  /// also lets module clients depend on each other (consumer is the
+  /// generating module's own output dir, not the app's).
   Map<String, String> referencedPackages({
     required Iterable<String> referencedClassNames,
-    required Directory appClientDir,
+    required Directory consumerDir,
   }) {
     final out = <String, String>{};
     for (final name in referencedClassNames) {
       final layout = _classToLayout[name];
       if (layout == null) continue;
-      out[layout.npmPackageName] = 'file:${layout.relativeFromAppClient}';
+      out[layout.npmPackageName] = 'file:${_posixRelative(
+        from: consumerDir.path,
+        to: layout.outputDir.path,
+      )}';
     }
     return out;
+  }
+
+  /// Relative path from [from] → [to] using forward slashes,
+  /// regardless of host platform. We canonicalise both ends before
+  /// asking the path package so symlinks and `..` segments don't
+  /// produce surprising results.
+  static String _posixRelative({required String from, required String to}) {
+    final platformRel = p.relative(p.canonicalize(to), from: p.canonicalize(from));
+    return p.split(platformRel).join('/');
   }
 }

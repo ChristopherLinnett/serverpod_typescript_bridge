@@ -151,9 +151,24 @@ class GenerateCommand extends Command<int> {
 
     stdout.writeln('Wrote TypeScript client to ${appPaths.outputDir.path}');
 
-    // 4. Run npm install + npm run build against the APP client only.
-    //    Module clients are resolved transitively via file: deps.
+    // 4. Build module clients first, then the app. The app's tsc
+    //    consumes module `dist/` outputs through the `file:..` deps;
+    //    if those `dist/` directories don't exist yet the app's
+    //    typecheck fails (`Cannot find module 'auth_typescript_client'
+    //    or its corresponding type declarations`). npm doesn't run
+    //    `prepare` for `file:` deps, so we have to drive the builds
+    //    ourselves and in dependency order.
     if (ar['build'] as bool) {
+      for (final mod in discovered) {
+        final layout = layoutResolver.resolve(mod.dartPkgName);
+        final modWarn =
+            await PostBuildRunner(outputDir: layout.outputDir).run();
+        if (modWarn != null) {
+          stderr.writeln(
+            'Module client ${mod.dartPkgName} build skipped: $modWarn',
+          );
+        }
+      }
       final warning =
           await PostBuildRunner(outputDir: appPaths.outputDir).run();
       if (warning != null) {

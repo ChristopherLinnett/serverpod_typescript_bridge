@@ -37,6 +37,10 @@ class ModuleDiscoverer {
   /// Returns an empty list if the project has no module deps.
   /// Throws [StateError] if `package_config.json` cannot be located —
   /// that means `dart pub get` hasn't been run yet.
+  ///
+  /// The package whose root resolves to [serverDir] is always
+  /// excluded — when generating a module-typed project we'd otherwise
+  /// rediscover ourselves and try to generate the same client twice.
   static List<DiscoveredModule> discover(Directory serverDir) {
     final configFile = _locatePackageConfig(serverDir);
     if (configFile == null) {
@@ -50,6 +54,7 @@ class ModuleDiscoverer {
         as Map<String, dynamic>;
     final packages = (config['packages'] as List).cast<Map<String, dynamic>>();
     final configDir = configFile.parent.parent; // walks .dart_tool/
+    final selfPath = p.canonicalize(serverDir.path);
 
     final modules = <DiscoveredModule>[];
     for (final pkg in packages) {
@@ -57,6 +62,7 @@ class ModuleDiscoverer {
       final rootUri = pkg['rootUri'] as String;
       final pkgDir = _resolvePackageDir(rootUri, configDir);
       if (pkgDir == null) continue;
+      if (p.canonicalize(pkgDir.path) == selfPath) continue;
 
       final generatorYaml =
           File(p.join(pkgDir.path, 'config', 'generator.yaml'));
