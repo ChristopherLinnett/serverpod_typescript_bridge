@@ -18,6 +18,8 @@ analyzer:
     # Fixture is an independent Serverpod project with its own analysis
     # config and its own deps. We don't want our analyzer reaching into it.
     - test/fixtures/**
+    # The TypeScript runtime is its own Node project — no Dart sources.
+    - lib/runtime/typescript/**
 
 # Uncomment the following section to specify additional rules.
 

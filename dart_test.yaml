@@ -12,3 +12,4 @@ paths:
   - test/protocol_loader_test.dart
   - test/protocol_to_json_test.dart
   - test/inspect_command_test.dart
+  - test/typescript_runtime_layout_test.dart
