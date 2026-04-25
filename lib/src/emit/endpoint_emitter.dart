@@ -80,27 +80,81 @@ class EndpointEmitter {
         method.annotations.any((a) => a.name == 'Deprecated' || a.name == 'deprecated');
     if (isDeprecated) w.writeln('/** @deprecated */');
 
-    final isStreaming = method is MethodStreamDefinition ||
+    final hasStreamReturn = method.returnType.className == 'Stream';
+    final hasStreamParam =
         method.parameters.any((p) => p.type.className == 'Stream') ||
-        method.parametersPositional.any((p) => p.type.className == 'Stream') ||
-        method.parametersNamed.any((p) => p.type.className == 'Stream');
+            method.parametersPositional.any((p) => p.type.className == 'Stream') ||
+            method.parametersNamed.any((p) => p.type.className == 'Stream');
 
-    final signature = _buildSignature(method);
-    w.writeln('async ${method.name}(${signature.params}): ${signature.returnType} {');
-    w.indent(() {
-      if (isStreaming) {
+    final signature = _buildSignature(method, isOutputStream: hasStreamReturn);
+
+    if (hasStreamParam) {
+      // Bidirectional (input Stream<T>) is tracked as follow-up #25.
+      // Emit the FINAL-shape signature (AsyncIterable<T>) but throw —
+      // when #25 lands the body changes, not the signature, so callers
+      // don't need a breaking-change migration.
+      w.writeln(
+        '${method.name}(${signature.params}): ${signature.returnType} {',
+      );
+      w.indent(() {
         w.writeln(
-          "throw new Error('Streaming endpoint methods are not supported in v0.1 — see issue #10.');",
+          "throw new Error('Bidirectional streaming (input Stream<T> "
+          "parameters) is not supported in v0.1 — see issue #25.');",
         );
-        return;
-      }
+      });
+      w.writeln('}');
+      w.blankLine();
+      return;
+    }
+
+    if (hasStreamReturn) {
+      // Output streams return AsyncIterable<T> directly (not Promise).
+      w.writeln(
+        '${method.name}(${signature.params}): ${signature.returnType} {',
+      );
+      w.indent(() {
+        _emitStreamingMethodBody(w, ep, method, signature);
+      });
+      w.writeln('}');
+      w.blankLine();
+      return;
+    }
+
+    w.writeln(
+      'async ${method.name}(${signature.params}): ${signature.returnType} {',
+    );
+    w.indent(() {
       _emitMethodBody(w, ep, method, signature);
     });
     w.writeln('}');
     w.blankLine();
   }
 
-  _Signature _buildSignature(MethodDefinition method) {
+  void _emitStreamingMethodBody(
+    TsWriter w,
+    EndpointDefinition ep,
+    MethodDefinition method,
+    _Signature signature,
+  ) {
+    final args = _argsObjectExpression(method);
+    final inner = signature.tsReturnInner;
+    final decode =
+        '(raw: unknown) => ${mapper.map(signature.returnInner).fromJsonExpr('raw')}';
+
+    w.writeln('return this.caller.callStreamingServerEndpoint<$inner>(');
+    w.indent(() {
+      w.writeln("'${ep.name}',");
+      w.writeln("'${method.name}',");
+      w.writeln('$args,');
+      w.writeln('$decode,');
+    });
+    w.writeln(') as unknown as AsyncIterable<$inner>;');
+  }
+
+  _Signature _buildSignature(
+    MethodDefinition method, {
+    bool isOutputStream = false,
+  }) {
     final params = <String>[];
     for (final p in method.parameters) {
       params.add('${_safe(p.name)}: ${mapper.map(p.type).tsType}');
@@ -109,6 +163,7 @@ class EndpointEmitter {
       params.add('${_safe(p.name)}?: ${mapper.map(p.type).tsType}');
     }
     if (method.parametersNamed.isNotEmpty) {
+      final allOptional = method.parametersNamed.every((p) => !p.required);
       final inner = method.parametersNamed
           .map((p) {
             final tsType = mapper.map(p.type).tsType;
@@ -117,16 +172,25 @@ class EndpointEmitter {
                 : '${_safe(p.name)}?: $tsType';
           })
           .join('; ');
-      params.add('named: { $inner }');
+      // When every named param is optional, the `named` object itself
+      // can be omitted at the call site too.
+      params.add(allOptional ? 'named?: { $inner }' : 'named: { $inner }');
     }
 
     final returnInner = _futureInner(method.returnType);
     final tsReturn = mapper.map(returnInner).tsType;
-    final asyncReturn = tsReturn == 'void' ? 'Promise<void>' : 'Promise<$tsReturn>';
+    final String wrapped;
+    if (isOutputStream) {
+      wrapped = 'AsyncIterable<$tsReturn>';
+    } else if (tsReturn == 'void') {
+      wrapped = 'Promise<void>';
+    } else {
+      wrapped = 'Promise<$tsReturn>';
+    }
 
     return _Signature(
       params: params.join(', '),
-      returnType: asyncReturn,
+      returnType: wrapped,
       returnInner: returnInner,
       tsReturnInner: tsReturn,
     );
@@ -138,16 +202,7 @@ class EndpointEmitter {
     MethodDefinition method,
     _Signature signature,
   ) {
-    final argEntries = <String>[];
-    for (final p in method.parameters) {
-      argEntries.add('${_safe(p.name)}: ${_safe(p.name)}');
-    }
-    for (final p in method.parametersPositional) {
-      argEntries.add('${_safe(p.name)}: ${_safe(p.name)}');
-    }
-    for (final p in method.parametersNamed) {
-      argEntries.add('${_safe(p.name)}: named.${_safe(p.name)}');
-    }
+    final args = _argsObjectExpression(method);
 
     final isVoid = signature.tsReturnInner == 'void';
     final decode = isVoid
@@ -164,14 +219,43 @@ class EndpointEmitter {
     w.indent(() {
       w.writeln("'${ep.name}',");
       w.writeln("'${method.name}',");
-      if (argEntries.isEmpty) {
-        w.writeln('{},');
-      } else {
-        w.writeln('{ ${argEntries.join(', ')} },');
-      }
+      w.writeln('$args,');
       w.writeln('$decode$optionsArg,');
     });
     w.writeln(');');
+  }
+
+  /// Builds the args object expression for the call site.
+  ///
+  /// Wire keys ALWAYS use the original Dart parameter name (so a Dart
+  /// param named `class` stays `class:` on the wire even if the local
+  /// TS variable name had to be escaped to `class_`). Optional params
+  /// are spread guarded so omitting the arg sends nothing instead of
+  /// an explicit null.
+  String _argsObjectExpression(MethodDefinition method) {
+    final entries = <String>[];
+    for (final p in method.parameters) {
+      // Wire key is the original Dart name; TS local is the safe ident.
+      entries.add("'${p.name}': ${_safe(p.name)}");
+    }
+    for (final p in method.parametersPositional) {
+      // Optional positional → spread-guarded so undefined → omitted.
+      entries.add(
+        "...(${_safe(p.name)} !== undefined && { '${p.name}': ${_safe(p.name)} })",
+      );
+    }
+    for (final p in method.parametersNamed) {
+      final access = 'named?.${_safe(p.name)}';
+      if (p.required) {
+        entries.add("'${p.name}': named.${_safe(p.name)}");
+      } else {
+        entries.add(
+          "...($access !== undefined && { '${p.name}': $access })",
+        );
+      }
+    }
+    if (entries.isEmpty) return '{}';
+    return '{ ${entries.join(', ')} }';
   }
 
   TypeDefinition _futureInner(TypeDefinition t) {
