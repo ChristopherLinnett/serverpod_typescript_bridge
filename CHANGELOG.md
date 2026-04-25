@@ -1,3 +1,25 @@
+## 0.2.3
+
+- Bugfix: when generating a module client (`serverpod_auth_core`,
+  `serverpod_auth_idp`, etc.), the per-run `ModuleClassIndex` is now
+  scoped to exclude the project's own classes. Previously the index
+  contained every discovered module — including the one currently being
+  emitted — so `ModuleImportLines` produced both a legitimate local
+  cross-file import (`import { AuthUser } from './auth_user.js'`) AND
+  a self-referential cross-package import
+  (`import { AuthUser } from 'serverpod_auth_core_typescript_client'`).
+  `tsc` then exploded with `Duplicate identifier 'AuthUser'` and
+  `Cannot find module 'serverpod_auth_core_typescript_client'` (a
+  package can't import from itself). `GenerationPipeline.run` now
+  computes `localNames` from the IR and passes
+  `moduleIndex.excluding(localNames)` everywhere it would have used
+  the raw index — emitter mappers, scaffold deps, protocol switch.
+- Bugfix: empty `endpoints/index.ts` and `protocol/index.ts` barrels
+  now emit `export {};` so TS treats them as modules. Modules without
+  any concrete endpoints (e.g. `serverpod_auth_core` exposes only
+  models and exceptions) previously broke the consuming package's
+  `tsc` with `File '…/endpoints/index.ts' is not a module`.
+
 ## 0.2.2
 
 - Bugfix: synthesised module configs now populate their `modules:`

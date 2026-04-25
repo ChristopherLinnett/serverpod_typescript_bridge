@@ -52,6 +52,11 @@ class EndpointEmitter {
       final stem = f.replaceAll(RegExp(r'\.ts$'), '');
       w.writeln("export * from './$stem.js';");
     }
+    // A barrel with zero exports is a script in TS's eyes and the
+    // `import * as r from './endpoints/index.js'` consumer fails with
+    // `File '…' is not a module`. The empty `export {}` is the
+    // canonical opt-in to module status.
+    if (filenames.isEmpty) w.writeln('export {};');
     _writeFile('index.ts', w.toString());
   }
 
