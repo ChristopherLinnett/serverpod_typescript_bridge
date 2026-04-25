@@ -121,12 +121,14 @@ class GenerateCommand extends Command<int> {
         .whereType<EnumDefinition>()
         .map((e) => e.className)
         .toSet();
+    final projectClassNames = {for (final m in ir.models) m.className};
     ModelEmitter(
       outputDir: paths.outputDir,
       tracker: tracker,
       mapper: TsTypeMapper(
         sealedClassNames: sealedClassNames,
         enumClassNames: enumClassNames,
+        projectClassNames: projectClassNames,
       ),
     ).emitAll(ir.models);
     EndpointEmitter(
@@ -136,6 +138,7 @@ class GenerateCommand extends Command<int> {
         modelPrefix: 'p.',
         sealedClassNames: sealedClassNames,
         enumClassNames: enumClassNames,
+        projectClassNames: projectClassNames,
       ),
     ).emitAll(ir.endpoints);
     ClientEmitter(
