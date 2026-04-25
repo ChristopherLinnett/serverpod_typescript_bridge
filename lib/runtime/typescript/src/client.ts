@@ -2,7 +2,10 @@ import { HttpEndpointCaller, type EndpointCaller } from './endpoint.js';
 import { HttpTransport, type UnaryCallOptions } from './http_transport.js';
 import type { SerializationManager } from './serialization.js';
 import type { ClientOptions } from './types.js';
-import { ClientMethodStreamManager } from './ws_transport.js';
+import {
+  ClientMethodStreamManager,
+  type InputStreamSpec,
+} from './ws_transport.js';
 
 /**
  * Base for every generated top-level `Client`. The generated subclass
@@ -52,12 +55,14 @@ export abstract class ServerpodClientShared implements EndpointCaller {
     method: string,
     args: Record<string, unknown>,
     decode: (raw: unknown) => T,
+    inputStreams?: Record<string, InputStreamSpec>,
   ): Promise<AsyncIterable<T>> {
     return this._caller.callStreamingServerEndpoint(
       endpoint,
       method,
       args,
       decode,
+      inputStreams,
     );
   }
 }

@@ -12,14 +12,21 @@ import {
 } from './ws_messages.js';
 
 /**
+ * Spec for a single input stream the client is sending into a
+ * server-side method. The encoder turns each value into the
+ * `{ className, data }` envelope the server expects on
+ * `MethodStreamMessage.object`.
+ */
+export interface InputStreamSpec<T = unknown> {
+  iterable: AsyncIterable<T>;
+  encode: (value: T) => { className: string; data: Record<string, unknown> };
+}
+
+/**
  * Manages a single multiplexed WebSocket connection to
  * `<host>/v1/websocket`. Generated client code calls
- * `openOutputStream(...)` / `openBidiStream(...)` to start a
- * server-side method that returns a `Stream<T>`.
- *
- * v0.1 supports server-to-client output streams. Bidirectional
- * (client supplies input streams) is wired but minimally tested —
- * follow-up issues track production hardening.
+ * `openMethodStream(...)` for both output-only and bidirectional
+ * streaming methods.
  */
 export class ClientMethodStreamManager {
   constructor(
@@ -77,6 +84,9 @@ export class ClientMethodStreamManager {
       }
       case 'method_stream_message': {
         const data = env.data as MethodStreamMessageData;
+        // Only output-stream values land here; the parameter field is
+        // omitted for server→client messages.
+        if (data.parameter !== undefined) return;
         this.handlers.get(data.connectionId)?.onValue(data);
         return;
       }
@@ -105,25 +115,32 @@ export class ClientMethodStreamManager {
   }
 
   /**
-   * Open an output-only stream and return an AsyncIterable that yields
-   * decoded values. Throws on auth/endpoint errors.
+   * Open a streaming method call. Output values arrive on the returned
+   * AsyncIterable. If [inputStreams] is supplied, the runtime spawns
+   * one feeder task per input stream and forwards values to the server
+   * as `MethodStreamMessage` frames; on each feeder's completion it
+   * sends a `CloseMethodStreamCommand` for that parameter.
+   *
+   * Throws on auth/endpoint open errors.
    */
-  async openOutputStream<T>(opts: {
+  async openMethodStream<T>(opts: {
     endpoint: string;
     method: string;
     args: Record<string, unknown>;
     decode: (raw: unknown) => T;
+    inputStreams?: Record<string, InputStreamSpec>;
   }): Promise<AsyncIterable<T>> {
     await this.open();
     const connectionId = `c${this.nextConnectionId++}`;
     const auth = await this.authProvider?.getAuthHeaderValue();
+    const inputStreamNames = Object.keys(opts.inputStreams ?? {});
     const command: OpenMethodStreamCommandData = {
       endpoint: opts.endpoint,
       method: opts.method,
       connectionId,
       // Double-encoded JSON string per Dart contract.
       args: JSON.stringify(this._encodeArgs(opts.args)),
-      inputStreams: [],
+      inputStreams: inputStreamNames,
       ...(auth ? { authentication: auth } : {}),
     };
 
@@ -131,6 +148,24 @@ export class ClientMethodStreamManager {
     this.handlers.set(connectionId, handler);
     this.socket!.send(buildEnvelope('open_method_stream_command', command));
     await handler.openResponse;
+
+    // Spawn a feeder per input stream. Each runs in the background
+    // for the lifetime of the call.
+    if (opts.inputStreams) {
+      for (const [name, spec] of Object.entries(opts.inputStreams)) {
+        // Fire-and-forget — the iterable's lifetime drives the feeder.
+        // Errors during a feeder are reported by closing that input
+        // parameter early; the server's behaviour on early close is
+        // its own concern.
+        void this._feedInputStream(
+          opts.endpoint,
+          opts.method,
+          connectionId,
+          name,
+          spec,
+        );
+      }
+    }
 
     return handler.iterable<T>(() => {
       const close: CloseMethodStreamCommandData = {
@@ -143,6 +178,54 @@ export class ClientMethodStreamManager {
       );
       this.handlers.delete(connectionId);
     });
+  }
+
+  /** Backwards-compatible alias for output-only streams. */
+  openOutputStream<T>(opts: {
+    endpoint: string;
+    method: string;
+    args: Record<string, unknown>;
+    decode: (raw: unknown) => T;
+  }): Promise<AsyncIterable<T>> {
+    return this.openMethodStream(opts);
+  }
+
+  private async _feedInputStream(
+    endpoint: string,
+    method: string,
+    connectionId: string,
+    parameter: string,
+    spec: InputStreamSpec,
+  ): Promise<void> {
+    try {
+      for await (const value of spec.iterable) {
+        if (!this.handlers.has(connectionId)) return;
+        const message: MethodStreamMessageData = {
+          endpoint,
+          method,
+          connectionId,
+          parameter,
+          object: spec.encode(value),
+        };
+        this.socket?.send(
+          buildEnvelope('method_stream_message', message),
+        );
+      }
+    } catch (_) {
+      // If the user's iterable throws, close the stream cleanly so
+      // the server doesn't wait forever for the next value.
+    } finally {
+      // Tell the server "no more values for this parameter".
+      const close: CloseMethodStreamCommandData = {
+        endpoint,
+        method,
+        connectionId,
+        parameter,
+      };
+      this.socket?.send(
+        buildEnvelope('close_method_stream_command', close),
+      );
+    }
   }
 
   private _encodeArgs(
@@ -172,10 +255,10 @@ class _StreamHandler {
 
   private readonly _values: unknown[] = [];
   private readonly _waiters: Array<(v: IteratorResult<unknown>) => void> = [];
-  private _error?: unknown;
+  private _error: unknown | undefined;
   private _closed = false;
-  private _openResolve?: () => void;
-  private _openReject?: (e: unknown) => void;
+  private _openResolve: (() => void) | undefined;
+  private _openReject: ((e: unknown) => void) | undefined;
 
   readonly openResponse: Promise<void> = new Promise((resolve, reject) => {
     this._openResolve = resolve;

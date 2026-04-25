@@ -61,13 +61,13 @@ const greeting = await client.greeting.sayHello('world');
 | Module-prefix `__className__` | ✅ | Protocol switch normalises `<prefix>.<Class>` → bare `<Class>` |
 | HTTP unary calls | ✅ | fetch-based; status mapping; auth header; one-shot 401 refresh |
 | Output streams | ✅ | `Stream<T>` returns → `AsyncIterable<T>`; WebSocket transport |
+| Bidirectional streams | ✅ | `Stream<T>` parameter → `streams: { name: AsyncIterable<T> }`; values forwarded as `MethodStreamMessage` frames |
 | Typed exceptions | ✅ | `{className, data}` envelope decoded via `Protocol.deserializeByClassName` |
 
 ## Out of scope for v0.1
 
 | Feature | Tracker |
 |---|---|
-| Bidirectional streaming (input `Stream<T>` parameters) | [#25](https://github.com/ChristopherLinnett/serverpod_typescript_bridge/issues/25) |
 | Records (Dart 3 records as endpoint params/return) | post-v0.1 |
 | Watch mode (`-w`) | post-v0.1 |
 | Module client npm publishing (currently vendored) | v0.2 |

@@ -19,3 +19,4 @@ paths:
   - test/generate_command_test.dart
   - test/ts_writer_test.dart
   - test/module_emission_test.dart
+  - test/bidi_streaming_emission_test.dart

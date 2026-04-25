@@ -1,5 +1,8 @@
 import type { HttpTransport, UnaryCallOptions } from './http_transport.js';
-import type { ClientMethodStreamManager } from './ws_transport.js';
+import type {
+  ClientMethodStreamManager,
+  InputStreamSpec,
+} from './ws_transport.js';
 
 /**
  * Bridges a generated `EndpointXxx` class to whatever transport its
@@ -18,13 +21,16 @@ export interface EndpointCaller {
 
   /**
    * Open a server-side streaming method. Implementations route through
-   * the parent's [ClientMethodStreamManager].
+   * the parent's [ClientMethodStreamManager]. Pass [inputStreams] for
+   * bidirectional methods — one entry per `Stream<T>` parameter the
+   * server expects.
    */
   callStreamingServerEndpoint<T>(
     endpoint: string,
     method: string,
     args: Record<string, unknown>,
     decode: (raw: unknown) => T,
+    inputStreams?: Record<string, InputStreamSpec>,
   ): Promise<AsyncIterable<T>>;
 }
 
@@ -69,12 +75,14 @@ export abstract class ModuleEndpointCaller implements EndpointCaller {
     method: string,
     args: Record<string, unknown>,
     decode: (raw: unknown) => T,
+    inputStreams?: Record<string, InputStreamSpec>,
   ): Promise<AsyncIterable<T>> {
     return this.parent.callStreamingServerEndpoint(
       endpoint,
       method,
       args,
       decode,
+      inputStreams,
     );
   }
 }
@@ -105,6 +113,7 @@ export class HttpEndpointCaller implements EndpointCaller {
     method: string,
     args: Record<string, unknown>,
     decode: (raw: unknown) => T,
+    inputStreams?: Record<string, InputStreamSpec>,
   ): Promise<AsyncIterable<T>> {
     if (!this.streams) {
       throw new Error(
@@ -112,11 +121,12 @@ export class HttpEndpointCaller implements EndpointCaller {
           'require ServerpodClientShared with the streaming runtime wired.',
       );
     }
-    return this.streams.openOutputStream<T>({
+    return this.streams.openMethodStream<T>({
       endpoint,
       method,
       args,
       decode,
+      ...(inputStreams ? { inputStreams } : {}),
     });
   }
 }
