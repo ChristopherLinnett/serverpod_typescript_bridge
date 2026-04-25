@@ -1,0 +1,11 @@
+### Thrown when a requested resource cannot be located.
+###
+### Round-trips as a typed `SerializableException` over the wire. Exercises the
+### typed-exception decoding path in the runtime.
+exception: NotFoundException
+fields:
+  ### Identifier of the missing resource.
+  resourceId: String
+
+  ### Human-readable message.
+  message: String

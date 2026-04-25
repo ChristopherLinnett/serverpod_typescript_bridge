@@ -1,0 +1,36 @@
+### A user profile.
+###
+### Exercises every primitive that the v0.1 generator must support, plus
+### a representative mix of nullable fields. Used as a parity oracle for
+### the model emitter.
+class: UserProfile
+fields:
+  ### Stable user identifier.
+  id: int
+
+  ### Display name shown on the profile page.
+  displayName: String
+
+  ### Year of birth, optional.
+  birthYear: int?
+
+  ### Average rating, in `[0.0, 5.0]`.
+  rating: double
+
+  ### Whether the profile is publicly visible.
+  isPublic: bool
+
+  ### When the profile was created (UTC).
+  createdAt: DateTime
+
+  ### How long the user has been a member.
+  membershipDuration: Duration
+
+  ### Lifetime karma points (can grow large).
+  karma: BigInt
+
+  ### Stable cross-device identifier.
+  deviceId: UuidValue
+
+  ### Optional bio markdown blob.
+  bio: String?

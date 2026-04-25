@@ -1,0 +1,10 @@
+# `dart test`'s `paths` does not support globs — it only takes file paths or
+# directory paths (which recurse). Listing `test/` would descend into the
+# Serverpod fixture under test/fixtures/sample_server/, which is an
+# independent package with its own runner and would fail to load here.
+#
+# So this is an explicit allow-list of top-level test files. When you add a
+# new top-level test/*.dart file, append it here.
+paths:
+  - test/sample_server_fixture_test.dart
+  - test/serverpod_typescript_bridge_test.dart

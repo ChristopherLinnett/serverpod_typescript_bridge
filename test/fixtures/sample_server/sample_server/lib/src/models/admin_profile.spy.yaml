@@ -1,0 +1,9 @@
+### Profile for an administrator.
+###
+### Exercises non-sealed inheritance — `AdminProfile` extends [UserProfile]
+### and adds a privilege scope.
+class: AdminProfile
+extends: UserProfile
+fields:
+  ### Privilege scope for this administrator (e.g. `superuser`).
+  scope: String

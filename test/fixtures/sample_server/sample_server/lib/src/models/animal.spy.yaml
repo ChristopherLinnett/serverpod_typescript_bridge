@@ -1,0 +1,9 @@
+### Sealed base for the animal hierarchy.
+###
+### Sub-types ([Dog], [Cat]) discriminate via `__className__` on the wire.
+### Used as the parity oracle for sealed/polymorphic emission.
+class: Animal
+sealed: true
+fields:
+  ### The animal's name.
+  name: String

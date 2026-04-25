@@ -1,0 +1,9 @@
+### A dog. Concrete subclass of the sealed [Animal].
+class: Dog
+extends: Animal
+fields:
+  ### Breed name.
+  breed: String
+
+  ### Whether the dog is good with children.
+  goodWithKids: bool
