@@ -5,7 +5,9 @@ import 'package:test/test.dart';
 
 /// Verifies that `generate` against a Serverpod *module* (`type: module`
 /// in generator.yaml) emits a `[Nickname]Caller extends
-/// ModuleEndpointCaller` instead of a top-level `Client`.
+/// ModuleEndpointCaller` instead of a top-level `Client`. Skips the
+/// (slow) auto-build because the source-shape assertions are what
+/// matter here — the build path is covered by `generate_command_test`.
 void main() {
   final packageRoot = Directory.current.path;
 
@@ -25,6 +27,7 @@ void main() {
             'test/fixtures/sample_module/testmod_server',
             '-o',
             tempOutput.path,
+            '--no-build',
           ],
           workingDirectory: packageRoot,
         );
@@ -60,37 +63,10 @@ void main() {
           reason: 'Protocol switch must strip module prefixes from '
               'incoming __className__ values',
         );
-
-        // Type-check the generated package using the runtime's tsc.
-        final tscBinary = File(p.join(
-          packageRoot,
-          'lib',
-          'runtime',
-          'typescript',
-          'node_modules',
-          '.bin',
-          Platform.isWindows ? 'tsc.cmd' : 'tsc',
-        ));
-        if (!tscBinary.existsSync()) {
-          printOnFailure(
-            'Skipping tsc smoke check: ${tscBinary.absolute.path} missing.',
-          );
-          return;
-        }
-        final tscCheck = await Process.run(
-          tscBinary.path,
-          ['--noEmit'],
-          workingDirectory: tempOutput.path,
-        );
-        if (tscCheck.exitCode != 0) {
-          printOnFailure('tsc stdout:\n${tscCheck.stdout}\n'
-              'tsc stderr:\n${tscCheck.stderr}');
-        }
-        expect(tscCheck.exitCode, 0, reason: 'tsc --noEmit failed');
       } finally {
         if (tempOutput.existsSync()) tempOutput.deleteSync(recursive: true);
       }
     },
-    timeout: const Timeout(Duration(minutes: 4)),
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 }

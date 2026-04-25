@@ -12,9 +12,13 @@ Generate a fully-typed TypeScript client for a Serverpod project — drop-in par
 # inside your Serverpod server package
 dart pub add --dev serverpod_typescript_bridge
 
-# generate the TS client
+# generate the TS client (runs npm install + npm run build by default,
+# so the output is import-ready)
 dart run serverpod_typescript_bridge generate
 ```
+
+Pass `--no-build` if you want source files only (e.g. you're on
+pnpm/yarn/bun, or your CI runs the build step itself).
 
 This writes a sibling package to your existing Dart client:
 
@@ -92,6 +96,8 @@ Options:
                     Defaults to <server>/../<name>_typescript_client/.
                     Override via `typescript_client_package_path` in
                     `config/generator.yaml`.
+      --[no-]build  After emitting source, run `npm install` + `npm run build`
+                    in the output directory so it is import-ready (default: on).
 ```
 
 ## How it works

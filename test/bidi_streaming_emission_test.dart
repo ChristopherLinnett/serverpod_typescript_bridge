@@ -26,6 +26,7 @@ void main() {
             'test/fixtures/sample_server/sample_server',
             '-o',
             tempOutput.path,
+            '--no-build',
           ],
           workingDirectory: packageRoot,
         );

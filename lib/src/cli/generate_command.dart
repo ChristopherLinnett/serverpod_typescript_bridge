@@ -15,13 +15,13 @@ import '../emit/model_emitter.dart';
 import '../emit/output_paths.dart';
 import '../emit/scaffold_emitter.dart';
 import '../emit/ts_type_mapper.dart';
+import 'post_build_runner.dart';
 
 /// `generate` — produce the TypeScript client package for a Serverpod
-/// project.
-///
-/// In v0.1 this writes the static scaffold (package.json, tsconfig,
-/// runtime, barrel). Issues #5–#10 layer in model and endpoint emission
-/// on top.
+/// project. Default: emits source AND runs `npm install` + `npm run
+/// build` so the resulting package is import-ready. Pass `--no-build`
+/// to skip the install + build steps (e.g. for non-npm toolchains
+/// or CI pipelines that build separately).
 class GenerateCommand extends Command<int> {
   GenerateCommand() {
     argParser
@@ -38,6 +38,13 @@ class GenerateCommand extends Command<int> {
             'Defaults to `<server>/../<name>_typescript_client/`, '
             'overridable via `typescript_client_package_path` in '
             '`config/generator.yaml`.',
+      )
+      ..addFlag(
+        'build',
+        defaultsTo: true,
+        help: 'After emitting source, run `npm install` + `npm run '
+            'build` in the output directory so it is import-ready. '
+            'Pass `--no-build` to skip; you can build manually later.',
       );
   }
 
@@ -79,8 +86,6 @@ class GenerateCommand extends Command<int> {
       explicitOutput: ar['output'] as String?,
     );
 
-    // Load the IR up front so we fail fast on analyzer errors before
-    // touching disk.
     final ProtocolDefinition ir;
     try {
       ir = await ProtocolLoader.load(serverDir);
@@ -89,8 +94,6 @@ class GenerateCommand extends Command<int> {
       return 70;
     }
 
-    // Tracker is scoped to ONLY generator-owned subdirectories so a
-    // user's hand-written `.ts` helper under `src/` never gets swept.
     final tracker = GeneratedFileTracker([
       Directory(p.join(paths.outputDir.path, 'src', 'runtime')),
       Directory(p.join(paths.outputDir.path, 'src', 'protocol')),
@@ -114,10 +117,17 @@ class GenerateCommand extends Command<int> {
         .where((m) => m.isSealed)
         .map((m) => m.className)
         .toSet();
+    final enumClassNames = ir.models
+        .whereType<EnumDefinition>()
+        .map((e) => e.className)
+        .toSet();
     ModelEmitter(
       outputDir: paths.outputDir,
       tracker: tracker,
-      mapper: TsTypeMapper(sealedClassNames: sealedClassNames),
+      mapper: TsTypeMapper(
+        sealedClassNames: sealedClassNames,
+        enumClassNames: enumClassNames,
+      ),
     ).emitAll(ir.models);
     EndpointEmitter(
       outputDir: paths.outputDir,
@@ -125,6 +135,7 @@ class GenerateCommand extends Command<int> {
       mapper: TsTypeMapper(
         modelPrefix: 'p.',
         sealedClassNames: sealedClassNames,
+        enumClassNames: enumClassNames,
       ),
     ).emitAll(ir.endpoints);
     ClientEmitter(
@@ -133,10 +144,25 @@ class GenerateCommand extends Command<int> {
       config: config,
     ).emit(endpoints: ir.endpoints, models: ir.models);
 
-    // Sweep orphans now that every emitter has run.
     tracker.sweepOrphans();
 
     stdout.writeln('Wrote TypeScript client to ${paths.outputDir.path}');
+
+    if (ar['build'] as bool) {
+      final warning =
+          await PostBuildRunner(outputDir: paths.outputDir).run();
+      if (warning != null) {
+        stderr.writeln(warning);
+      } else {
+        stdout.writeln('Built dist/. Package is import-ready.');
+      }
+    } else {
+      stdout.writeln(
+        'Skipping build (--no-build). Package source is in place; run '
+        '`npm install && npm run build` in the output directory before '
+        'importing.',
+      );
+    }
     return 0;
   }
 
