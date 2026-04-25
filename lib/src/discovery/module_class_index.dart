@@ -61,7 +61,10 @@ class ModuleClassIndex {
 
     for (final mod in discovered) {
       final layout = layoutResolver.resolve(mod.dartPkgName);
-      final ir = await ProtocolLoader.load(mod.serverPkgDir);
+      // Modules typically live under the user's pub-cache, where the
+      // sibling dart client package isn't present — `loadForModule`
+      // synthesises a config that bypasses that validation.
+      final ir = await ProtocolLoader.loadForModule(mod.serverPkgDir);
       for (final m in ir.models) {
         classToLayout[m.className] = layout;
         if (m is ModelClassDefinition && m.isSealed) {

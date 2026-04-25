@@ -28,9 +28,18 @@ class GenerationPipeline {
     required Directory serverDir,
     required Directory outputDir,
     required ModuleClassIndex moduleIndex,
+    bool isModulePackage = false,
   }) async {
-    final config = await _loadConfig(serverDir);
-    final ir = await ProtocolLoader.load(serverDir);
+    // Module packages typically live under pub-cache and don't ship a
+    // sibling dart client, so `GeneratorConfig.load` would fail on the
+    // client-pubspec validation. The synthetic-config path mirrors the
+    // module-IR loading we already do in [ModuleClassIndex.build].
+    final config = isModulePackage
+        ? ProtocolLoader.synthesizeModuleConfig(serverDir)
+        : await _loadConfig(serverDir);
+    final ir = isModulePackage
+        ? await ProtocolLoader.loadForModule(serverDir)
+        : await ProtocolLoader.load(serverDir);
 
     final paths = OutputPaths(
       outputDir: outputDir,
