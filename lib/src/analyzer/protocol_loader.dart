@@ -64,6 +64,19 @@ class ProtocolLoader {
     return _runAnalyses(config);
   }
 
+  /// Runs the same model + endpoint analyses as [load] / [loadForModule]
+  /// but against an already-built [config]. Useful when the caller has
+  /// synthesised a config out-of-band (e.g. [GenerationPipeline.run] in
+  /// module mode) and wants to reuse it for both emission AND IR loading
+  /// — a single read of `pubspec.yaml` + `config/generator.yaml`, no
+  /// risk of the two halves seeing different on-disk state.
+  static Future<ProtocolDefinition> loadFromConfig(
+    GeneratorConfig config,
+  ) async {
+    _ensureExperimentalFeaturesInitialised();
+    return _runAnalyses(config);
+  }
+
   static Future<ProtocolDefinition> _runAnalyses(GeneratorConfig config) async {
     final models = await _runModelAnalysis(config);
     final endpoints = await _runEndpointAnalysis(config);
@@ -174,7 +187,10 @@ class ProtocolLoader {
         'Cannot determine module name.',
       );
     }
-    final yaml = loadYaml(pubspec.readAsStringSync());
+    final yaml = _safeLoadYaml(
+      pubspec,
+      context: 'module pubspec.yaml',
+    );
     if (yaml is! YamlMap || yaml['name'] is! String) {
       throw ProtocolLoaderException._(
         ProtocolLoaderPhase.config,
@@ -190,8 +206,47 @@ class ProtocolLoader {
       p.join(serverDirectory.path, 'config', 'generator.yaml'),
     );
     if (!file.existsSync()) return YamlMap();
-    final yaml = loadYaml(file.readAsStringSync());
+    final yaml = _safeLoadYaml(
+      file,
+      context: 'module config/generator.yaml',
+    );
     return yaml is YamlMap ? yaml : YamlMap();
+  }
+
+  /// Reads + parses a YAML file, translating any `YamlException` /
+  /// `FileSystemException` / `FormatException` into a typed
+  /// [ProtocolLoaderException] with [ProtocolLoaderPhase.config] so the
+  /// CLI surfaces a consistent error class instead of leaking raw
+  /// parser exceptions. Stack trace preserved via
+  /// [Error.throwWithStackTrace].
+  static dynamic _safeLoadYaml(File file, {required String context}) {
+    try {
+      return loadYaml(file.readAsStringSync());
+    } on YamlException catch (e, st) {
+      Error.throwWithStackTrace(
+        ProtocolLoaderException._(
+          ProtocolLoaderPhase.config,
+          'Failed to parse $context at ${file.path}: ${e.message}',
+        ),
+        st,
+      );
+    } on FileSystemException catch (e, st) {
+      Error.throwWithStackTrace(
+        ProtocolLoaderException._(
+          ProtocolLoaderPhase.config,
+          'Failed to read $context at ${file.path}: ${e.message}',
+        ),
+        st,
+      );
+    } on FormatException catch (e, st) {
+      Error.throwWithStackTrace(
+        ProtocolLoaderException._(
+          ProtocolLoaderPhase.config,
+          'Failed to parse $context at ${file.path}: ${e.message}',
+        ),
+        st,
+      );
+    }
   }
 
   static bool _experimentalFeaturesInitialised = false;

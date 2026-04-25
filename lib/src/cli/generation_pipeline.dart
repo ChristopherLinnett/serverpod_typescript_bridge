@@ -33,18 +33,18 @@ class GenerationPipeline {
   }) async {
     // Module packages typically live under pub-cache and don't ship a
     // sibling dart client, so `GeneratorConfig.load` would fail on the
-    // client-pubspec validation. The synthetic-config path mirrors the
-    // module-IR loading we already do in [ModuleClassIndex.build].
+    // client-pubspec validation. We synthesise a config from the
+    // module's own pubspec + generator.yaml ONCE here and reuse it for
+    // both emission (below) and IR loading — a second pass would
+    // re-read the same files and could legitimately see different
+    // on-disk state if the user is generating mid-edit.
     // [knownModules] lets the synthesised config resolve cross-module
     // references inside the module being generated.
     final config = isModulePackage
         ? ProtocolLoader.synthesizeModuleConfig(serverDir,
             knownModules: knownModules)
         : await _loadConfig(serverDir);
-    final ir = isModulePackage
-        ? await ProtocolLoader.loadForModule(serverDir,
-            knownModules: knownModules)
-        : await ProtocolLoader.load(serverDir);
+    final ir = await ProtocolLoader.loadFromConfig(config);
 
     final paths = OutputPaths(
       outputDir: outputDir,
