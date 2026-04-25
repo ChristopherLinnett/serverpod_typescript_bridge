@@ -16,11 +16,11 @@ cd lib/runtime/typescript && npm install && cd -
 The project has two test layers — a Dart suite (generator + analyzer + e2e) and a TypeScript suite (runtime).
 
 ```bash
-# Dart side: 77+ cases incl. e2e against both fixtures
+# Dart side: 109 cases (as of v0.2.4) incl. e2e against both fixtures
 dart analyze
 dart test
 
-# TypeScript runtime side: 60+ vitest cases
+# TypeScript runtime side: 62 vitest cases
 cd lib/runtime/typescript
 npm run typecheck
 npm test
@@ -71,4 +71,4 @@ Both rely on the runtime's `node_modules` having been installed (see the local-s
 3. Verify the full suite is green: `dart analyze && dart test && (cd lib/runtime/typescript && npm test)`.
 4. Run the external smoke-test: generate against a non-fixture Serverpod project (e.g. a fresh `serverpod create -t mini -n smoke` outside this repo) and verify the output is `tsc --noEmit` clean.
 5. Commit + tag + push (commit AND tag): `git commit -am "Release v<version>" && git tag v<version> && git push --follow-tags`.
-6. (Optional, deferred to v0.2) `dart pub publish` once stabilised.
+6. (Optional, post-v0.2) `dart pub publish` once stabilised. Until then consumers install via the git-ref `dev_dependencies` form documented in the top-level [README](README.md).
