@@ -36,8 +36,10 @@ class TsTypeMapper {
     this.modelPrefix = '',
     Set<String>? sealedClassNames,
     Set<String>? enumClassNames,
+    Set<String>? projectClassNames,
   })  : sealedClassNames = sealedClassNames ?? const {},
-        enumClassNames = enumClassNames ?? const {};
+        enumClassNames = enumClassNames ?? const {},
+        projectClassNames = projectClassNames ?? const {};
 
   final String modelPrefix;
 
@@ -52,6 +54,13 @@ class TsTypeMapper {
   /// `<Name>Codec.toJson(value)` and `<Name>Codec.fromJson(json)`
   /// instead of `<value>.toJson()` / `<Name>.fromJson(json)`.
   final Set<String> enumClassNames;
+
+  /// Every class name emitted as part of THIS project (sealed, enum,
+  /// regular class, exception). Anything not in here is a foreign
+  /// type — typically defined in a Serverpod module the project
+  /// depends on. v0.1.x stubs foreign types as `unknown`; v0.2 will
+  /// emit a real cross-package import.
+  final Set<String> projectClassNames;
 
   TsTypeRef map(TypeDefinition type) {
     final base = _mapInner(type);
@@ -122,6 +131,19 @@ class TsTypeMapper {
           toJsonExpr: (v) => v,
           fromJsonExpr: (v) => v,
         );
+      case 'void':
+        // Endpoint emitter inspects `tsReturnInner == 'void'` and emits
+        // `() => undefined as void` for the decoder, so the to/from
+        // expressions here are unreachable in practice. Keep them
+        // identity-passes for safety.
+        return TsTypeRef(
+          tsType: 'void',
+          toJsonExpr: (v) => v,
+          fromJsonExpr: (v) => 'undefined as void',
+        );
+      case 'dynamic':
+      case 'Object':
+        return _passthrough('unknown');
       default:
         return _mapModelOrEnum(type);
     }
@@ -181,6 +203,22 @@ class TsTypeMapper {
 
   TsTypeRef _mapModelOrEnum(TypeDefinition type) {
     final qualifiedType = '$modelPrefix${type.className}';
+
+    // Foreign type — typically defined in a Serverpod module the
+    // project depends on (e.g. AuthSuccess from serverpod_auth_idp).
+    // v0.1.x falls back to `unknown` so the package compiles; v0.2
+    // will emit real `import type { ... } from '<module-ts-pkg>';`
+    // statements based on `TypeDefinition.url`.
+    if (projectClassNames.isNotEmpty &&
+        !projectClassNames.contains(type.className)) {
+      return TsTypeRef(
+        // The `unknown` cast keeps tsc happy and surfaces the gap to
+        // users via the IDE's hover.
+        tsType: 'unknown /* TODO(v0.2): module type ${type.className} */',
+        toJsonExpr: (v) => '$v as unknown',
+        fromJsonExpr: (v) => '$v as unknown',
+      );
+    }
 
     if (enumClassNames.contains(type.className)) {
       // Enums use a sibling `<Name>Codec` object for both directions.

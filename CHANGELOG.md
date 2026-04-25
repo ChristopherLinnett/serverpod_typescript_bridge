@@ -1,3 +1,20 @@
+## 0.1.4
+
+- Bugfix: type mapper now handles `void`, `dynamic`, and `Object`
+  explicitly. Previously these fell through to the project-model branch
+  and emitted invalid `p.void.fromJson(...)` / `p.dynamic` etc.,
+  breaking `tsc --noEmit` on any endpoint with a `Future<void>` return.
+- Bugfix: types defined in Serverpod modules the project depends on
+  (e.g. `AuthSuccess` from `serverpod_auth_idp`) are no longer
+  emitted as `p.AuthSuccess`. Until module-aware imports land in v0.2,
+  they fall back to `unknown /* TODO(v0.2): module type AuthSuccess */`
+  so the package compiles and the gap is surfaced via the IDE hover.
+  Endpoint-side callers can cast at the call site.
+- The mapper now takes a `projectClassNames` set so it can distinguish
+  "in our protocol/ barrel" from "defined in a module dependency". The
+  generate command computes this from the IR's models list and passes
+  it through to both model and endpoint emitters.
+
 ## 0.1.3
 
 - Bugfix: model emitter now emits cross-file imports for fields whose
