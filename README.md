@@ -1,41 +1,111 @@
 # serverpod_typescript_bridge
 
-Generate a fully-typed TypeScript client for a Serverpod project — the same way `serverpod generate` produces the Dart client today.
+Generate a fully-typed TypeScript client for a Serverpod project — drop-in parity with `serverpod generate` for the Dart client.
 
 ## Status
 
-**Pre-alpha.** Under active construction. Not usable yet.
+**v0.1 — usable.** The generator produces a tsc-clean, type-safe TypeScript client for any Serverpod project against the surface listed below. See the support matrix for known limitations.
 
-## What it will do
-
-Given a Serverpod project, this package generates a sibling package
-`<project_name>_typescript_client` containing:
-
-- A typed TypeScript client for every endpoint
-- TypeScript classes for every Serverpod model (with all primitive and complex
-  type conversions handled)
-- All Dart doc comments preserved as TSDoc
-- A build-ready package (`tsconfig.json`, `package.json`, compiled `dist/`) so
-  it can be consumed by any TypeScript/JavaScript frontend (React, Vue, etc.)
-
-## Goals
-
-- **Drop-in parity** with `serverpod generate` for the Dart client. Same options, same workflow.
-- **No re-definition.** Endpoints, models, and docs come straight from the Serverpod project.
-- **Type-safe end-to-end.** All Dart primitives map to ergonomic TypeScript primitives.
-- **Zero runtime divergence.** The generated client uses the same wire protocol as the Dart client.
-
-## Usage (planned)
+## Quick start
 
 ```bash
-# inside a Serverpod project
+# inside your Serverpod server package
 dart pub add --dev serverpod_typescript_bridge
+
+# generate the TS client
 dart run serverpod_typescript_bridge generate
 ```
 
-This produces `<project_name>_typescript_client/` next to your existing
-`<project_name>_client/` Dart package.
+This writes a sibling package to your existing Dart client:
+
+```
+my_app/
+├── my_app_server/                   # your Serverpod server package
+├── my_app_client/                   # serverpod-generated Dart client
+└── my_app_typescript_client/        # serverpod_typescript_bridge output
+    ├── package.json
+    ├── tsconfig.json
+    └── src/
+        ├── client.ts                # top-level Client
+        ├── protocol.ts              # SerializationManager + dispatch
+        ├── runtime/                 # vendored runtime (HTTP + WS)
+        ├── protocol/                # one TS class per model
+        └── endpoints/               # one TS class per endpoint
+```
+
+Then in your TS/React app:
+
+```ts
+import { Client } from 'my_app_typescript_client';
+
+const client = new Client('https://api.my-app.com');
+const greeting = await client.greeting.sayHello('world');
+```
+
+## Supported in v0.1
+
+| Feature | Status | Notes |
+|---|---|---|
+| Endpoint methods (unary HTTP) | ✅ | required/optional positional + named params |
+| Doc-comment passthrough | ✅ | Dart `///` and `{@template}`/`{@macro}` → TSDoc |
+| `@unauthenticatedClientCall` | ✅ | flips `authenticated: false` per call |
+| `@Deprecated` | ✅ | propagates to JSDoc `@deprecated` |
+| Primitives | ✅ | int, double, String, bool, DateTime, Duration, BigInt, UuidValue, ByteData |
+| Collections | ✅ | `List<T>`, `Set<T>`, `Map<String,V>`, `Map<K,V>` (non-string-keyed wire form) |
+| Nullables | ✅ | `T?` → `T \| null`; `copyWith` honours explicit `null` |
+| Sealed hierarchies | ✅ | discriminated-union TS type + `<Name>Base.fromJson` dispatch on `__className__` |
+| Multi-level sealed | ✅ | every concrete subclass dispatches through every sealed ancestor |
+| Enums | ✅ | both `byIndex` and `byName` |
+| Exceptions | ✅ | `SerializableException` subclasses extend `Error` and round-trip via `Protocol` |
+| Modules (`type: module`) | ✅ | emits `<Nickname>Caller extends ModuleEndpointCaller` + `modulePrefix` const |
+| Module-prefix `__className__` | ✅ | Protocol switch normalises `<prefix>.<Class>` → bare `<Class>` |
+| HTTP unary calls | ✅ | fetch-based; status mapping; auth header; one-shot 401 refresh |
+| Output streams | ✅ | `Stream<T>` returns → `AsyncIterable<T>`; WebSocket transport |
+| Typed exceptions | ✅ | `{className, data}` envelope decoded via `Protocol.deserializeByClassName` |
+
+## Out of scope for v0.1
+
+| Feature | Tracker |
+|---|---|
+| Bidirectional streaming (input `Stream<T>` parameters) | [#25](https://github.com/ChristopherLinnett/serverpod_typescript_bridge/issues/25) |
+| Records (Dart 3 records as endpoint params/return) | post-v0.1 |
+| Watch mode (`-w`) | post-v0.1 |
+| Module client npm publishing (currently vendored) | v0.2 |
+| `dart run serverpod_typescript_bridge inspect` polish | works, but undocumented; primarily a debug surface |
+
+## CLI reference
+
+```
+$ dart run serverpod_typescript_bridge --help
+
+Generate a TypeScript client for a Serverpod project.
+
+Usage: serverpod_typescript_bridge <command> [arguments]
+
+Commands:
+  generate   Generate the TypeScript client package next to the Serverpod project.
+  inspect    Print the parsed protocol IR as JSON (for debugging).
+
+Options:
+  -d, --directory   Path to the Serverpod server package (auto-detected if omitted).
+  -o, --output      Path to the TypeScript client package to (re-)generate.
+                    Defaults to <server>/../<name>_typescript_client/.
+                    Override via `typescript_client_package_path` in
+                    `config/generator.yaml`.
+```
+
+## How it works
+
+The generator is a Dart-side tool that reuses **`serverpod_cli`'s public analyzer** to load the IR for your Serverpod project, then walks that IR and emits TypeScript. Because the IR is the same one Serverpod uses internally, there's no parser drift — every feature Serverpod knows about flows through automatically.
+
+The generated client depends on a small TypeScript runtime that ships *vendored* inside each generated package (under `src/runtime/`). v0.2 will publish the runtime to npm and switch generated packages to declare it as a dependency; existing v0.1 clients re-generate cleanly into v0.2.
+
+For the full architecture, see [docs/architecture.md](docs/architecture.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-TBD.
+[MIT](LICENSE).
