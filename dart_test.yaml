@@ -17,3 +17,4 @@ paths:
   - test/generated_file_tracker_test.dart
   - test/scaffold_emitter_test.dart
   - test/generate_command_test.dart
+  - test/ts_writer_test.dart
