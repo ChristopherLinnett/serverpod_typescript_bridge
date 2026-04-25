@@ -12,7 +12,7 @@
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 import 'package:serverpod_client/serverpod_client.dart' as _i1;
 
-/// Task priority. Default `byIndex` serialization (wire form is the int index).
+/// Task priority. `byIndex` serialization (wire form is the int index).
 enum Priority implements _i1.SerializableModel {
   /// Lowest priority.
   low,
@@ -23,21 +23,21 @@ enum Priority implements _i1.SerializableModel {
   /// Highest priority.
   high;
 
-  static Priority fromJson(String name) {
-    switch (name) {
-      case 'low':
+  static Priority fromJson(int index) {
+    switch (index) {
+      case 0:
         return Priority.low;
-      case 'normal':
+      case 1:
         return Priority.normal;
-      case 'high':
+      case 2:
         return Priority.high;
       default:
-        throw ArgumentError('Value "$name" cannot be converted to "Priority"');
+        throw ArgumentError('Value "$index" cannot be converted to "Priority"');
     }
   }
 
   @override
-  String toJson() => name;
+  int toJson() => index;
 
   @override
   String toString() => name;

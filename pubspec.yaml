@@ -17,9 +17,13 @@ dependencies:
   args: ^2.5.0
   path: ^1.9.0
   yaml: ^3.1.2
-  analyzer: ^7.0.0
+  analyzer: ^8.1.0
   pub_semver: ^2.1.4
   meta: ^1.16.0
+  # Reuses serverpod_cli's analyzer to produce the IR we walk when
+  # emitting TypeScript. Pinned to a minor range — coupling to internal
+  # `src/` is documented in lib/src/analyzer/protocol_loader.dart.
+  serverpod_cli: ^3.4.7
 
 dev_dependencies:
   lints: ^6.0.0
