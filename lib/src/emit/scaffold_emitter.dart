@@ -16,10 +16,15 @@ class ScaffoldEmitter {
   ScaffoldEmitter({
     required this.outputPaths,
     required this.tracker,
+    this.additionalBarrelExports = const [],
   });
 
   final OutputPaths outputPaths;
   final GeneratedFileTracker tracker;
+
+  /// Extra re-exports the barrel `src/index.ts` should include beyond
+  /// the runtime — e.g. `./protocol/index.js` once model emission lands.
+  final List<String> additionalBarrelExports;
 
   Future<void> emit() async {
     outputPaths.outputDir.createSync(recursive: true);
@@ -43,14 +48,13 @@ class ScaffoldEmitter {
   }
 
   void _writeIndexBarrel() {
-    // For now the barrel re-exports only the runtime. Model and
-    // endpoint emission (issues #5–#8) will append their re-exports
-    // here at write-time.
-    _writeRelative(
-      'src/index.ts',
-      "// Public surface of the generated client.\n"
-      "export * from './runtime/index.js';\n",
-    );
+    final lines = StringBuffer()
+      ..writeln('// Public surface of the generated client.')
+      ..writeln("export * from './runtime/index.js';");
+    for (final extra in additionalBarrelExports) {
+      lines.writeln("export * from '$extra';");
+    }
+    _writeRelative('src/index.ts', lines.toString());
   }
 
   Future<void> _copyRuntime() async {

@@ -9,8 +9,10 @@ import 'package:serverpod_cli/src/config/experimental_feature.dart';
 import '../analyzer/protocol_loader.dart';
 import '../discovery/server_directory_finder.dart';
 import '../emit/generated_file_tracker.dart';
+import '../emit/model_emitter.dart';
 import '../emit/output_paths.dart';
 import '../emit/scaffold_emitter.dart';
+import '../emit/ts_type_mapper.dart';
 
 /// `generate` — produce the TypeScript client package for a Serverpod
 /// project.
@@ -75,10 +77,11 @@ class GenerateCommand extends Command<int> {
       explicitOutput: ar['output'] as String?,
     );
 
-    // Pre-load the IR so we fail fast on analyzer errors before writing
-    // anything to disk. Issues #5+ will consume the IR to drive emission.
+    // Load the IR up front so we fail fast on analyzer errors before
+    // touching disk.
+    final ProtocolDefinition ir;
     try {
-      await ProtocolLoader.load(serverDir);
+      ir = await ProtocolLoader.load(serverDir);
     } on ProtocolLoaderException catch (e) {
       stderr.writeln(e.message);
       return 70;
@@ -91,11 +94,19 @@ class GenerateCommand extends Command<int> {
     final scaffold = ScaffoldEmitter(
       outputPaths: paths,
       tracker: tracker,
+      additionalBarrelExports: const ["./protocol/index.js"],
     );
     await scaffold.emit();
 
-    // Sweep orphans now. As model/endpoint emission lands, they'll
-    // record their writes before this sweep runs.
+    final modelEmitter = ModelEmitter(
+      outputDir: paths.outputDir,
+      tracker: tracker,
+      mapper: TsTypeMapper(),
+    );
+    modelEmitter.emitAll(ir.models);
+
+    // Sweep orphans now. As endpoint emission lands, it'll record its
+    // writes before this sweep runs.
     tracker.sweepOrphans();
 
     stdout.writeln('Wrote TypeScript client to ${paths.outputDir.path}');
