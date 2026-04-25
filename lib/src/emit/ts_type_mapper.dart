@@ -25,7 +25,25 @@ class TsTypeRef {
 /// Maps a Serverpod analyzer [TypeDefinition] to its TypeScript
 /// counterpart. Per the canonical mapping table in
 /// [docs/architecture.md](../../../docs/architecture.md).
+///
+/// [modelPrefix] is prepended to project-model TS types and `fromJson`
+/// calls — used by the endpoint emitter to reach across into the
+/// protocol barrel (`p.UserProfile.fromJson(...)`). Model emitters
+/// that already live inside the protocol directory pass an empty
+/// prefix.
 class TsTypeMapper {
+  TsTypeMapper({
+    this.modelPrefix = '',
+    Set<String>? sealedClassNames,
+  }) : sealedClassNames = sealedClassNames ?? const {};
+
+  final String modelPrefix;
+
+  /// Class names that were emitted as sealed bases. References to these
+  /// types still use the bare name (the discriminated-union alias), but
+  /// `fromJson` routes through `<Name>Base` (the abstract dispatcher).
+  final Set<String> sealedClassNames;
+
   TsTypeRef map(TypeDefinition type) {
     final base = _mapInner(type);
     if (!type.nullable) return base;
@@ -85,6 +103,16 @@ class TsTypeMapper {
         return _mapSet(type);
       case 'Map':
         return _mapMap(type);
+      case 'Future':
+      case 'Stream':
+        // Streaming params/returns are stubbed by the endpoint emitter,
+        // so the precise type doesn't matter at the call site — but we
+        // still need a TS placeholder that compiles.
+        return TsTypeRef(
+          tsType: 'unknown',
+          toJsonExpr: (v) => v,
+          fromJsonExpr: (v) => v,
+        );
       default:
         return _mapModelOrEnum(type);
     }
@@ -130,7 +158,7 @@ class TsTypeMapper {
         toJsonExpr: (v) =>
             'r.encodeMap($v, (x: ${value.tsType}) => ${value.toJsonExpr('x')})',
         fromJsonExpr: (v) =>
-            'r.decodeMap($v, (x: unknown) => x as string, (x: unknown) => ${value.fromJsonExpr('x')})',
+            'r.decodeRecord($v, (x: unknown) => ${value.fromJsonExpr('x')})',
       );
     }
     return TsTypeRef(
@@ -144,14 +172,18 @@ class TsTypeMapper {
 
   TsTypeRef _mapModelOrEnum(TypeDefinition type) {
     // Models, enums, exceptions, and other project types are emitted
-    // by ModelEmitter under the same className. The default contract:
-    //   toJson()       → calls .toJson() on the instance
-    //   fromJson(json) → static <ClassName>.fromJson(json)
-    final cls = type.className;
+    // by ModelEmitter under the same className. Sealed bases route
+    // `fromJson` through `<Name>Base` (the abstract dispatcher); the
+    // type itself is the bare union alias.
+    final qualifiedType = '$modelPrefix${type.className}';
+    final fromJsonReceiver = sealedClassNames.contains(type.className)
+        ? '$modelPrefix${type.className}Base'
+        : qualifiedType;
     return TsTypeRef(
-      tsType: cls,
+      tsType: qualifiedType,
       toJsonExpr: (v) => '$v.toJson()',
-      fromJsonExpr: (v) => '$cls.fromJson($v as Record<string, unknown>)',
+      fromJsonExpr: (v) =>
+          '$fromJsonReceiver.fromJson($v as Record<string, unknown>)',
     );
   }
 

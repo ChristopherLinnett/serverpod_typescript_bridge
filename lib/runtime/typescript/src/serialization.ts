@@ -157,6 +157,25 @@ export function encodeMap<K, V>(
   return out;
 }
 
+/// String-keyed sibling of [decodeMap] that returns a plain
+/// JavaScript object — generated client code for `Map<String, V>`
+/// uses this to keep the ergonomic `Record<string, V>` TS type.
+export function decodeRecord<V>(
+  json: unknown,
+  valueDecoder: (raw: unknown) => V,
+): Record<string, V> {
+  if (json === null || typeof json !== 'object' || Array.isArray(json)) {
+    throw new TypeError(
+      `Cannot decode Record from ${typeof json}: ${JSON.stringify(json)}`,
+    );
+  }
+  const out: Record<string, V> = {};
+  for (const [k, v] of Object.entries(json as Record<string, unknown>)) {
+    out[k] = valueDecoder(v);
+  }
+  return out;
+}
+
 export function decodeMap<K, V>(
   json: unknown,
   keyDecoder: (raw: unknown) => K,
