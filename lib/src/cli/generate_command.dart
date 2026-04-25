@@ -1,24 +1,111 @@
+// ignore_for_file: implementation_imports
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
+import 'package:path/path.dart' as p;
+import 'package:serverpod_cli/analyzer.dart';
+import 'package:serverpod_cli/src/config/experimental_feature.dart';
+
+import '../analyzer/protocol_loader.dart';
+import '../discovery/server_directory_finder.dart';
+import '../emit/generated_file_tracker.dart';
+import '../emit/output_paths.dart';
+import '../emit/scaffold_emitter.dart';
 
 /// `generate` — produce the TypeScript client package for a Serverpod
-/// project. Stub for now; the real implementation lands in issue #4 and
-/// is fleshed out by issues #5–#10.
+/// project.
+///
+/// In v0.1 this writes the static scaffold (package.json, tsconfig,
+/// runtime, barrel). Issues #5–#10 layer in model and endpoint emission
+/// on top.
 class GenerateCommand extends Command<int> {
+  GenerateCommand() {
+    argParser
+      ..addOption(
+        'directory',
+        abbr: 'd',
+        help: 'Path to the Serverpod server package. '
+            'Auto-detected (walking up from cwd) if omitted.',
+      )
+      ..addOption(
+        'output',
+        abbr: 'o',
+        help: 'Path to the TypeScript client package to (re-)generate. '
+            'Defaults to `<server>/../<name>_typescript_client/`, '
+            'overridable via `typescript_client_package_path` in '
+            '`config/generator.yaml`.',
+      );
+  }
+
   @override
   String get name => 'generate';
 
   @override
   String get description =>
-      'Generate the TypeScript client package next to the current Serverpod project.';
+      'Generate the TypeScript client package next to the Serverpod project.';
 
   @override
   Future<int> run() async {
-    stderr.writeln(
-      'serverpod_typescript_bridge generate: not implemented yet.\n'
-      'See https://github.com/ChristopherLinnett/serverpod_typescript_bridge for status.',
+    final ar = argResults!;
+
+    final Directory serverDir;
+    try {
+      serverDir = ServerDirectoryFinder.find(
+        override: ar['directory'] as String?,
+      );
+    } on StateError catch (e) {
+      stderr.writeln(e.message);
+      return 70;
+    }
+
+    final GeneratorConfig config;
+    try {
+      _ensureExperimentalFeaturesInitialised();
+      config = await GeneratorConfig.load(
+        serverRootDir: serverDir.path,
+        interactive: false,
+      );
+    } catch (e) {
+      stderr.writeln('Failed to load generator.yaml: $e');
+      return 70;
+    }
+
+    final paths = OutputPaths.resolve(
+      config,
+      explicitOutput: ar['output'] as String?,
     );
-    return 70;
+
+    // Pre-load the IR so we fail fast on analyzer errors before writing
+    // anything to disk. Issues #5+ will consume the IR to drive emission.
+    try {
+      await ProtocolLoader.load(serverDir);
+    } on ProtocolLoaderException catch (e) {
+      stderr.writeln(e.message);
+      return 70;
+    }
+
+    final tracker = GeneratedFileTracker([
+      Directory(p.join(paths.outputDir.path, 'src')),
+    ]);
+
+    final scaffold = ScaffoldEmitter(
+      outputPaths: paths,
+      tracker: tracker,
+    );
+    await scaffold.emit();
+
+    // Sweep orphans now. As model/endpoint emission lands, they'll
+    // record their writes before this sweep runs.
+    tracker.sweepOrphans();
+
+    stdout.writeln('Wrote TypeScript client to ${paths.outputDir.path}');
+    return 0;
+  }
+
+  static bool _experimentalFeaturesInitialised = false;
+  static void _ensureExperimentalFeaturesInitialised() {
+    if (_experimentalFeaturesInitialised) return;
+    CommandLineExperimentalFeatures.initialize(const []);
+    _experimentalFeaturesInitialised = true;
   }
 }
