@@ -29,16 +29,21 @@ class GenerationPipeline {
     required Directory outputDir,
     required ModuleClassIndex moduleIndex,
     bool isModulePackage = false,
+    List<ModuleDependency> knownModules = const [],
   }) async {
     // Module packages typically live under pub-cache and don't ship a
     // sibling dart client, so `GeneratorConfig.load` would fail on the
     // client-pubspec validation. The synthetic-config path mirrors the
     // module-IR loading we already do in [ModuleClassIndex.build].
+    // [knownModules] lets the synthesised config resolve cross-module
+    // references inside the module being generated.
     final config = isModulePackage
-        ? ProtocolLoader.synthesizeModuleConfig(serverDir)
+        ? ProtocolLoader.synthesizeModuleConfig(serverDir,
+            knownModules: knownModules)
         : await _loadConfig(serverDir);
     final ir = isModulePackage
-        ? await ProtocolLoader.loadForModule(serverDir)
+        ? await ProtocolLoader.loadForModule(serverDir,
+            knownModules: knownModules)
         : await ProtocolLoader.load(serverDir);
 
     final paths = OutputPaths(
