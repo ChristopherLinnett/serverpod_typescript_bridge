@@ -128,6 +128,7 @@ class GenerateCommand extends Command<int> {
           serverDir: mod.serverPkgDir,
           outputDir: layout.outputDir,
           moduleIndex: moduleIndex,
+          isModulePackage: true,
         );
       } catch (e) {
         stderr.writeln(

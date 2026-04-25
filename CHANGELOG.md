@@ -1,3 +1,18 @@
+## 0.2.1
+
+- Bugfix: loading a Serverpod module's IR no longer requires the
+  module's sibling Dart client package to exist on disk. v0.2.0
+  routed module loading through `GeneratorConfig.load`, which
+  validates `client_package_path/pubspec.yaml` — but pub-cache
+  installs ship the server package alone, so generation crashed
+  with `Failed to load client pubspec.yaml`. The new
+  `ProtocolLoader.loadForModule(...)` synthesises a minimal
+  `GeneratorConfig` from the module's own `pubspec.yaml` +
+  `config/generator.yaml` and skips the cross-package validation
+  (we never emit a Dart client for the module anyway). The
+  generation pipeline now flips into this mode via the new
+  `isModulePackage: true` flag for the module-generation pass.
+
 ## 0.2.0
 
 - Module-aware generation. The CLI now walks `.dart_tool/package_config.json`
