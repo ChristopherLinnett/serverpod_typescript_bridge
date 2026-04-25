@@ -9,6 +9,7 @@ import 'package:serverpod_cli/src/config/experimental_feature.dart';
 import '../analyzer/protocol_loader.dart';
 import '../discovery/server_directory_finder.dart';
 import '../emit/generated_file_tracker.dart';
+import '../emit/endpoint_emitter.dart';
 import '../emit/model_emitter.dart';
 import '../emit/output_paths.dart';
 import '../emit/scaffold_emitter.dart';
@@ -94,16 +95,31 @@ class GenerateCommand extends Command<int> {
     final scaffold = ScaffoldEmitter(
       outputPaths: paths,
       tracker: tracker,
-      additionalBarrelExports: const ["./protocol/index.js"],
+      additionalBarrelExports: const [
+        './protocol/index.js',
+        './endpoints/index.js',
+      ],
     );
     await scaffold.emit();
 
-    final modelEmitter = ModelEmitter(
+    final sealedClassNames = ir.models
+        .whereType<ModelClassDefinition>()
+        .where((m) => m.isSealed)
+        .map((m) => m.className)
+        .toSet();
+    ModelEmitter(
       outputDir: paths.outputDir,
       tracker: tracker,
-      mapper: TsTypeMapper(),
-    );
-    modelEmitter.emitAll(ir.models);
+      mapper: TsTypeMapper(sealedClassNames: sealedClassNames),
+    ).emitAll(ir.models);
+    EndpointEmitter(
+      outputDir: paths.outputDir,
+      tracker: tracker,
+      mapper: TsTypeMapper(
+        modelPrefix: 'p.',
+        sealedClassNames: sealedClassNames,
+      ),
+    ).emitAll(ir.endpoints);
 
     // Sweep orphans now. As endpoint emission lands, it'll record its
     // writes before this sweep runs.
