@@ -157,9 +157,11 @@ export function encodeMap<K, V>(
   return out;
 }
 
-/// String-keyed sibling of [decodeMap] that returns a plain
-/// JavaScript object — generated client code for `Map<String, V>`
-/// uses this to keep the ergonomic `Record<string, V>` TS type.
+/**
+ * String-keyed sibling of {@link decodeMap} that returns a plain
+ * JavaScript object — generated client code for `Map<String, V>`
+ * uses this to keep the ergonomic `Record<string, V>` TS type.
+ */
 export function decodeRecord<V>(
   json: unknown,
   valueDecoder: (raw: unknown) => V,
