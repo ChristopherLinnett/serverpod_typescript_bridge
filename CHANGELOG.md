@@ -1,3 +1,19 @@
+## 0.1.3
+
+- Bugfix: model emitter now emits cross-file imports for fields whose
+  type references other project models. Previously a `field: SomeOther`
+  would compile only if every file happened to be in the same scope —
+  for any non-trivial Serverpod project the generated `tsc --noEmit`
+  reported `TS2304: Cannot find name 'SomeOther'`. Each model file now
+  walks its field types (descending into generics like `List<T>` /
+  `Map<K, V>`) and emits one `import { Name<, NameBase>?<, NameCodec>? }
+  from './<snake>.js';` per referenced project type. Self-references
+  are skipped.
+- Fixture's `UserProfile` extended with cross-references to `Priority`
+  (enum), `Colour` (enum, byName), `Animal` (sealed), and
+  `List<Priority>` (collection-wrapped enum) so the e2e regression-tests
+  this path going forward.
+
 ## 0.1.2
 
 - `generate` now runs `npm install` + `npm run build` in the output

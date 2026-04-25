@@ -34,3 +34,19 @@ fields:
 
   ### Optional bio markdown blob.
   bio: String?
+
+  ### Account priority — exercises a cross-model enum field reference
+  ### (forces the model emitter to emit `import { Priority, PriorityCodec }`).
+  priority: Priority
+
+  ### Favourite colour — exercises a cross-model enum field reference
+  ### with `byName` serialization.
+  favouriteColour: Colour?
+
+  ### Pet — exercises a cross-model field referencing a sealed hierarchy
+  ### (forces `import { Animal, AnimalBase }`).
+  pet: Animal?
+
+  ### Tags — exercises a generic-wrapped enum reference (`List<Priority>`
+  ### should still pull a Priority import).
+  priorityHistory: List<Priority>

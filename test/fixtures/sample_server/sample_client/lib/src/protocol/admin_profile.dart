@@ -12,6 +12,10 @@
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 import 'protocol.dart' as _i1;
 import 'package:serverpod_client/serverpod_client.dart' as _i2;
+import 'priority.dart' as _i3;
+import 'colour.dart' as _i4;
+import 'animal.dart' as _i5;
+import 'package:sample_client/src/protocol/protocol.dart' as _i6;
 
 /// Profile for an administrator.
 ///
@@ -30,6 +34,10 @@ abstract class AdminProfile extends _i1.UserProfile
     required super.karma,
     required super.deviceId,
     super.bio,
+    required super.priority,
+    super.favouriteColour,
+    super.pet,
+    required super.priorityHistory,
     required this.scope,
   });
 
@@ -44,6 +52,10 @@ abstract class AdminProfile extends _i1.UserProfile
     required BigInt karma,
     required _i2.UuidValue deviceId,
     String? bio,
+    required _i3.Priority priority,
+    _i4.Colour? favouriteColour,
+    _i5.Animal? pet,
+    required List<_i3.Priority> priorityHistory,
     required String scope,
   }) = _AdminProfileImpl;
 
@@ -65,6 +77,18 @@ abstract class AdminProfile extends _i1.UserProfile
         jsonSerialization['deviceId'],
       ),
       bio: jsonSerialization['bio'] as String?,
+      priority: _i3.Priority.fromJson((jsonSerialization['priority'] as int)),
+      favouriteColour: jsonSerialization['favouriteColour'] == null
+          ? null
+          : _i4.Colour.fromJson(
+              (jsonSerialization['favouriteColour'] as String),
+            ),
+      pet: jsonSerialization['pet'] == null
+          ? null
+          : _i6.Protocol().deserialize<_i5.Animal>(jsonSerialization['pet']),
+      priorityHistory: _i6.Protocol().deserialize<List<_i3.Priority>>(
+        jsonSerialization['priorityHistory'],
+      ),
       scope: jsonSerialization['scope'] as String,
     );
   }
@@ -87,6 +111,10 @@ abstract class AdminProfile extends _i1.UserProfile
     BigInt? karma,
     _i2.UuidValue? deviceId,
     Object? bio,
+    _i3.Priority? priority,
+    Object? favouriteColour,
+    Object? pet,
+    List<_i3.Priority>? priorityHistory,
     String? scope,
   });
   @override
@@ -103,6 +131,10 @@ abstract class AdminProfile extends _i1.UserProfile
       'karma': karma.toJson(),
       'deviceId': deviceId.toJson(),
       if (bio != null) 'bio': bio,
+      'priority': priority.toJson(),
+      if (favouriteColour != null) 'favouriteColour': favouriteColour?.toJson(),
+      if (pet != null) 'pet': pet?.toJson(),
+      'priorityHistory': priorityHistory.toJson(valueToJson: (v) => v.toJson()),
       'scope': scope,
     };
   }
@@ -127,6 +159,10 @@ class _AdminProfileImpl extends AdminProfile {
     required BigInt karma,
     required _i2.UuidValue deviceId,
     String? bio,
+    required _i3.Priority priority,
+    _i4.Colour? favouriteColour,
+    _i5.Animal? pet,
+    required List<_i3.Priority> priorityHistory,
     required String scope,
   }) : super._(
          id: id,
@@ -139,6 +175,10 @@ class _AdminProfileImpl extends AdminProfile {
          karma: karma,
          deviceId: deviceId,
          bio: bio,
+         priority: priority,
+         favouriteColour: favouriteColour,
+         pet: pet,
+         priorityHistory: priorityHistory,
          scope: scope,
        );
 
@@ -157,6 +197,10 @@ class _AdminProfileImpl extends AdminProfile {
     BigInt? karma,
     _i2.UuidValue? deviceId,
     Object? bio = _Undefined,
+    _i3.Priority? priority,
+    Object? favouriteColour = _Undefined,
+    Object? pet = _Undefined,
+    List<_i3.Priority>? priorityHistory,
     String? scope,
   }) {
     return AdminProfile(
@@ -170,6 +214,13 @@ class _AdminProfileImpl extends AdminProfile {
       karma: karma ?? this.karma,
       deviceId: deviceId ?? this.deviceId,
       bio: bio is String? ? bio : this.bio,
+      priority: priority ?? this.priority,
+      favouriteColour: favouriteColour is _i4.Colour?
+          ? favouriteColour
+          : this.favouriteColour,
+      pet: pet is _i5.Animal? ? pet : this.pet?.copyWith(),
+      priorityHistory:
+          priorityHistory ?? this.priorityHistory.map((e0) => e0).toList(),
       scope: scope ?? this.scope,
     );
   }

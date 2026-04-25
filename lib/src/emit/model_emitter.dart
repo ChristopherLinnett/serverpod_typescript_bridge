@@ -14,8 +14,7 @@ const _generatedHeader = '''
 ''';
 
 /// Emits one TypeScript file per Serverpod model — class, enum, or
-/// exception. Sealed hierarchies are out of scope for this pass; that
-/// emitter is added in issue #6.
+/// exception — plus a `protocol/index.ts` barrel re-exporting them.
 class ModelEmitter {
   ModelEmitter({
     required this.outputDir,
@@ -27,18 +26,30 @@ class ModelEmitter {
   final GeneratedFileTracker tracker;
   final TsTypeMapper mapper;
 
+  /// Class names emitted as TS enums. Used for cross-file imports —
+  /// enum imports also need to bring in `<Name>Codec`.
+  Set<String> get _enumClassNames => mapper.enumClassNames;
+
+  /// Class names emitted as sealed bases. Cross-file imports must also
+  /// bring in `<Name>Base` (the dispatcher) when a field references the
+  /// sealed type.
+  Set<String> get _sealedClassNames => mapper.sealedClassNames;
+
+  /// Every class name in the project — sealed bases, plain classes,
+  /// exceptions, and enums. Populated by [emitAll] before any per-file
+  /// emission so cross-file imports can be resolved.
+  late Set<String> _allClassNames;
+
   /// Emits every model in [models], plus a `protocol/index.ts` barrel
   /// re-exporting them all. Sealed bases get an extra discriminated-union
   /// type alias and a static `fromJson` that dispatches on `__className__`.
   /// Returns the list of emitted filenames (with the `.ts` suffix),
   /// in alphabetical order — the barrel writer strips `.ts`.
   List<String> emitAll(List<SerializableModelDefinition> models) {
+    _allClassNames = {for (final m in models) m.className};
+
     final modelClasses = models.whereType<ModelClassDefinition>().toList();
     final classByName = {for (final m in modelClasses) m.className: m};
-    // For each concrete subclass, collect EVERY sealed ancestor up the
-    // chain — not just the nearest. This keeps multi-level hierarchies
-    // (`sealed A → sealed B → concrete C`) correct: A's dispatch
-    // includes C as well as B.
     final subclassesBySealedAncestor =
         <String, List<ModelClassDefinition>>{};
     for (final m in modelClasses) {
@@ -49,7 +60,6 @@ class ModelEmitter {
             .add(m);
       }
     }
-    // Stable ordering across runs (helps goldens + diff stability).
     for (final list in subclassesBySealedAncestor.values) {
       list.sort((a, b) => a.className.compareTo(b.className));
     }
@@ -92,8 +102,6 @@ class ModelEmitter {
     }
   }
 
-  /// Returns the nearest sealed ancestor's name (or null) — used to
-  /// decide what concrete subclasses extend at the TS level.
   String? _nearestSealedAncestorName(
     ModelClassDefinition model,
     Map<String, ModelClassDefinition> byName,
@@ -110,6 +118,63 @@ class ModelEmitter {
     _writeFile('index.ts', w.toString());
   }
 
+  /// Walks a [TypeDefinition] recursively (descending into generics)
+  /// and yields every project-class name referenced. Skips primitives,
+  /// collections (List/Set/Map/Future/Stream), and any self-reference.
+  void _collectReferencedProjectTypes(
+    TypeDefinition type,
+    Set<String> out,
+  ) {
+    final name = type.className;
+    if (_allClassNames.contains(name)) out.add(name);
+    for (final g in type.generics) {
+      _collectReferencedProjectTypes(g, out);
+    }
+  }
+
+  /// Builds the cross-file import lines for [ownClassName], based on
+  /// the project types referenced in [fields] (plus an optional
+  /// extra symbol like a sealed ancestor we always need to import).
+  ///
+  /// Each emitted line covers ONE other file in `protocol/` and
+  /// brings in every required symbol from it (`Name`, `NameBase`,
+  /// `NameCodec`) so a single file's worth of references collapses
+  /// to one import statement.
+  List<String> _buildImportLines({
+    required String ownClassName,
+    required List<SerializableModelFieldDefinition> fields,
+    String? extraImport,
+  }) {
+    final referenced = <String>{};
+    for (final f in fields) {
+      _collectReferencedProjectTypes(f.type, referenced);
+    }
+    if (extraImport != null) referenced.add(extraImport);
+    referenced.remove(ownClassName); // never self-import
+
+    final sorted = referenced.toList()..sort();
+    return [
+      for (final ref in sorted)
+        "import { ${_importSymbols(ref).join(', ')} } from './${_filenameStemOf(ref)}.js';",
+    ];
+  }
+
+  /// Symbols we need to bring in from the file that defines [className].
+  /// Mirrors what `TsTypeMapper` emits at the use site:
+  ///   plain class       → just `Name`
+  ///   exception         → just `Name`
+  ///   sealed base       → `Name` (the union alias) + `NameBase` (dispatcher)
+  ///   enum              → `Name` + `NameCodec`
+  List<String> _importSymbols(String className) {
+    if (_enumClassNames.contains(className)) {
+      return [className, '${className}Codec'];
+    }
+    if (_sealedClassNames.contains(className)) {
+      return [className, '${className}Base'];
+    }
+    return [className];
+  }
+
   String _emitSealedBase(
     ModelClassDefinition model,
     List<ModelClassDefinition> subclasses,
@@ -117,12 +182,15 @@ class ModelEmitter {
     final w = TsWriter()
       ..writeRaw(_generatedHeader)
       ..writeln("import * as r from '../runtime/index.js';");
+    // Subclass imports are *value* imports — the switch dispatcher
+    // calls `Sub.fromJson(...)` so we need the runtime symbol.
     for (final sub in subclasses) {
-      w.writeln("import { ${sub.className} } from './${_filenameStemOf(sub.className)}.js';");
+      w.writeln(
+        "import { ${sub.className} } from './${_filenameStemOf(sub.className)}.js';",
+      );
     }
     w.blankLine();
 
-    // Discriminated-union type alias.
     final union = subclasses.isEmpty
         ? 'never'
         : subclasses.map((s) => s.className).join(' | ');
@@ -130,8 +198,6 @@ class ModelEmitter {
     w.writeln('export type ${model.className} = $union;');
     w.blankLine();
 
-    // Abstract base class — non-instantiable; carries the polymorphic
-    // `fromJson` dispatcher and a shared `toJson` contract.
     w.writeln(
       'export abstract class ${model.className}Base implements r.SerializableModel {',
     );
@@ -148,7 +214,6 @@ class ModelEmitter {
         w.writeln('switch (className) {');
         w.indent(() {
           for (final sub in subclasses) {
-            // Module prefix-aware: match both bare and `<module>.<Name>`.
             w.writeln(
               "case '${sub.className}': return ${sub.className}.fromJson(json);",
             );
@@ -170,19 +235,22 @@ class ModelEmitter {
     ModelClassDefinition model, {
     String? sealedAncestor,
   }) {
-    final w = TsWriter()
-      ..writeRaw(_generatedHeader)
-      ..writeln("import * as r from '../runtime/index.js';");
-    if (sealedAncestor != null) {
-      w.writeln(
-        "import { ${sealedAncestor}Base } from './${_filenameStemOf(sealedAncestor)}.js';",
-      );
-    }
-    w.blankLine();
-
     final fields = model.fields
         .where((f) => f.shouldIncludeField(false /* serverCode */))
         .toList();
+
+    final w = TsWriter()
+      ..writeRaw(_generatedHeader)
+      ..writeln("import * as r from '../runtime/index.js';");
+    final imports = _buildImportLines(
+      ownClassName: model.className,
+      fields: fields,
+      extraImport: sealedAncestor,
+    );
+    for (final line in imports) {
+      w.writeln(line);
+    }
+    w.blankLine();
 
     w.docComment(model.documentation?.join('\n'));
     if (sealedAncestor != null) {
@@ -195,7 +263,6 @@ class ModelEmitter {
       );
     }
     w.indent(() {
-      // Public fields
       for (final field in fields) {
         w.docComment(field.documentation?.join('\n'));
         final type = mapper.map(field.type);
@@ -203,7 +270,6 @@ class ModelEmitter {
       }
       w.blankLine();
 
-      // Constructor
       w.writeln('constructor(init: {');
       w.indent(() {
         for (final field in fields) {
@@ -221,7 +287,6 @@ class ModelEmitter {
       w.writeln('}');
       w.blankLine();
 
-      // fromJson
       w.writeln(
         'static fromJson(json: Record<string, unknown>): ${model.className} {',
       );
@@ -230,8 +295,7 @@ class ModelEmitter {
         w.indent(() {
           for (final field in fields) {
             final type = mapper.map(field.type);
-            final fromExpr =
-                type.fromJsonExpr("json['${field.name}']");
+            final fromExpr = type.fromJsonExpr("json['${field.name}']");
             w.writeln('${field.name}: $fromExpr,');
           }
         });
@@ -240,7 +304,6 @@ class ModelEmitter {
       w.writeln('}');
       w.blankLine();
 
-      // toJson
       w.writeln('toJson(): Record<string, unknown> {');
       w.indent(() {
         w.writeln('return {');
@@ -254,7 +317,9 @@ class ModelEmitter {
                 '{ ${field.name}: ${type.toJsonExpr('this.${field.name}')} }),',
               );
             } else {
-              w.writeln('${field.name}: ${type.toJsonExpr('this.${field.name}')},');
+              w.writeln(
+                '${field.name}: ${type.toJsonExpr('this.${field.name}')},',
+              );
             }
           }
         });
@@ -263,7 +328,6 @@ class ModelEmitter {
       w.writeln('}');
       w.blankLine();
 
-      // copyWith
       w.writeln('copyWith(partial: Partial<{');
       w.indent(() {
         for (final field in fields) {
@@ -277,10 +341,6 @@ class ModelEmitter {
         w.indent(() {
           for (final field in fields) {
             if (field.type.nullable) {
-              // Nullable fields honour `null` as a value: caller must
-              // be able to clear the field by passing `{ field: null }`.
-              // Distinguish "not in partial" from "in partial as null"
-              // via the `'field' in partial` check.
               w.writeln(
                 '${field.name}: '
                 "'${field.name}' in partial "
@@ -304,14 +364,21 @@ class ModelEmitter {
   }
 
   String _emitException(ExceptionClassDefinition model) {
-    final w = TsWriter()
-      ..writeRaw(_generatedHeader)
-      ..writeln("import * as r from '../runtime/index.js';")
-      ..blankLine();
-
     final fields = model.fields
         .where((f) => f.shouldIncludeField(false))
         .toList();
+
+    final w = TsWriter()
+      ..writeRaw(_generatedHeader)
+      ..writeln("import * as r from '../runtime/index.js';");
+    final imports = _buildImportLines(
+      ownClassName: model.className,
+      fields: fields,
+    );
+    for (final line in imports) {
+      w.writeln(line);
+    }
+    w.blankLine();
 
     w.docComment(model.documentation?.join('\n'));
     w.writeln(
@@ -334,8 +401,6 @@ class ModelEmitter {
       });
       w.writeln('}) {');
       w.indent(() {
-        // Best-effort: use `init.message` if there's a `message` field;
-        // otherwise the class name as the Error message.
         final hasMsg = fields.any((f) => f.name == 'message');
         if (hasMsg) {
           w.writeln('super(init.message as string);');
@@ -375,7 +440,9 @@ class ModelEmitter {
           w.writeln("__className__: '${model.className}',");
           for (final field in fields) {
             final type = mapper.map(field.type);
-            w.writeln('${field.name}: ${type.toJsonExpr('this.${field.name}')},');
+            w.writeln(
+              '${field.name}: ${type.toJsonExpr('this.${field.name}')},',
+            );
           }
         });
         w.writeln('};');
@@ -409,7 +476,6 @@ class ModelEmitter {
     final namespaceName = '${model.className}Codec';
     w.writeln('export const $namespaceName = {');
     w.indent(() {
-      // toJson
       if (byIndex) {
         w.writeln('toJson(value: ${model.className}): number {');
         w.indent(() {
@@ -430,7 +496,6 @@ class ModelEmitter {
         );
       }
       w.blankLine();
-      // fromJson
       w.writeln('fromJson(json: unknown): ${model.className} {');
       w.indent(() {
         if (byIndex) {
@@ -483,9 +548,6 @@ class ModelEmitter {
   }
 
   String _enumMemberName(String name) {
-    // TS enum members are valid identifiers; the value names from
-    // Serverpod YAML are already valid Dart identifiers, so simple
-    // capitalisation is safe.
     if (name.isEmpty) return name;
     return name[0].toUpperCase() + name.substring(1);
   }
