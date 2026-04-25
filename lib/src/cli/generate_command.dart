@@ -8,8 +8,9 @@ import 'package:serverpod_cli/src/config/experimental_feature.dart';
 
 import '../analyzer/protocol_loader.dart';
 import '../discovery/server_directory_finder.dart';
-import '../emit/generated_file_tracker.dart';
+import '../emit/client_emitter.dart';
 import '../emit/endpoint_emitter.dart';
+import '../emit/generated_file_tracker.dart';
 import '../emit/model_emitter.dart';
 import '../emit/output_paths.dart';
 import '../emit/scaffold_emitter.dart';
@@ -98,6 +99,8 @@ class GenerateCommand extends Command<int> {
       additionalBarrelExports: const [
         './protocol/index.js',
         './endpoints/index.js',
+        './protocol.js',
+        './client.js',
       ],
     );
     await scaffold.emit();
@@ -120,9 +123,12 @@ class GenerateCommand extends Command<int> {
         sealedClassNames: sealedClassNames,
       ),
     ).emitAll(ir.endpoints);
+    ClientEmitter(
+      outputDir: paths.outputDir,
+      tracker: tracker,
+    ).emit(endpoints: ir.endpoints, models: ir.models);
 
-    // Sweep orphans now. As endpoint emission lands, it'll record its
-    // writes before this sweep runs.
+    // Sweep orphans now that every emitter has run.
     tracker.sweepOrphans();
 
     stdout.writeln('Wrote TypeScript client to ${paths.outputDir.path}');
