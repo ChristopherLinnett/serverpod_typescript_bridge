@@ -1,0 +1,9 @@
+name: sample_module_workspace
+publish_to: none
+
+environment:
+  sdk: '^3.8.0'
+
+workspace:
+  - testmod_server
+  - testmod_client

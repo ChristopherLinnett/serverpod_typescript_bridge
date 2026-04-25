@@ -126,6 +126,7 @@ class GenerateCommand extends Command<int> {
     ClientEmitter(
       outputDir: paths.outputDir,
       tracker: tracker,
+      config: config,
     ).emit(endpoints: ir.endpoints, models: ir.models);
 
     // Sweep orphans now that every emitter has run.
