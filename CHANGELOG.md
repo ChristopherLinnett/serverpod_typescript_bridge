@@ -1,3 +1,15 @@
+## 0.1.1
+
+- Bidirectional streaming endpoints (input `Stream<T>` parameters
+  paired with an output `Stream<T>` return) now generate real call
+  bodies. The runtime spawns a per-input-stream feeder that
+  forwards each value as a `MethodStreamMessage` and sends a
+  parameter-scoped `CloseMethodStreamCommand` when the user's
+  AsyncIterable completes. Closes #25.
+- `ClientMethodStreamManager.openOutputStream` is now an alias for
+  `openMethodStream` (kept for source compatibility — pre-#25
+  generated clients keep working).
+
 ## 0.1.0
 
 First usable release. Generates a `tsc --noEmit` clean TypeScript client
