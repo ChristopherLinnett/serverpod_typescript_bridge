@@ -11,6 +11,10 @@
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 import 'package:serverpod_client/serverpod_client.dart' as _i1;
+import 'priority.dart' as _i2;
+import 'colour.dart' as _i3;
+import 'package:sample_client/src/protocol/protocol.dart' as _i4;
+import 'animal.dart' as _i5;
 
 /// A user profile.
 ///
@@ -29,6 +33,10 @@ class UserProfile implements _i1.SerializableModel {
     required this.karma,
     required this.deviceId,
     this.bio,
+    required this.priority,
+    this.favouriteColour,
+    this.pet,
+    required this.priorityHistory,
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> jsonSerialization) {
@@ -49,6 +57,18 @@ class UserProfile implements _i1.SerializableModel {
         jsonSerialization['deviceId'],
       ),
       bio: jsonSerialization['bio'] as String?,
+      priority: _i2.Priority.fromJson((jsonSerialization['priority'] as int)),
+      favouriteColour: jsonSerialization['favouriteColour'] == null
+          ? null
+          : _i3.Colour.fromJson(
+              (jsonSerialization['favouriteColour'] as String),
+            ),
+      pet: jsonSerialization['pet'] == null
+          ? null
+          : _i4.Protocol().deserialize<_i5.Animal>(jsonSerialization['pet']),
+      priorityHistory: _i4.Protocol().deserialize<List<_i2.Priority>>(
+        jsonSerialization['priorityHistory'],
+      ),
     );
   }
 
@@ -82,6 +102,22 @@ class UserProfile implements _i1.SerializableModel {
   /// Optional bio markdown blob.
   String? bio;
 
+  /// Account priority — exercises a cross-model enum field reference
+  /// (forces the model emitter to emit `import { Priority, PriorityCodec }`).
+  _i2.Priority priority;
+
+  /// Favourite colour — exercises a cross-model enum field reference
+  /// with `byName` serialization.
+  _i3.Colour? favouriteColour;
+
+  /// Pet — exercises a cross-model field referencing a sealed hierarchy
+  /// (forces `import { Animal, AnimalBase }`).
+  _i5.Animal? pet;
+
+  /// Tags — exercises a generic-wrapped enum reference (`List<Priority>`
+  /// should still pull a Priority import).
+  List<_i2.Priority> priorityHistory;
+
   /// Returns a shallow copy of this [UserProfile]
   /// with some or all fields replaced by the given arguments.
   @_i1.useResult
@@ -96,6 +132,10 @@ class UserProfile implements _i1.SerializableModel {
     BigInt? karma,
     _i1.UuidValue? deviceId,
     Object? bio = _Undefined,
+    _i2.Priority? priority,
+    Object? favouriteColour = _Undefined,
+    Object? pet = _Undefined,
+    List<_i2.Priority>? priorityHistory,
   }) {
     return UserProfile(
       id: id ?? this.id,
@@ -108,6 +148,13 @@ class UserProfile implements _i1.SerializableModel {
       karma: karma ?? this.karma,
       deviceId: deviceId ?? this.deviceId,
       bio: bio is String? ? bio : this.bio,
+      priority: priority ?? this.priority,
+      favouriteColour: favouriteColour is _i3.Colour?
+          ? favouriteColour
+          : this.favouriteColour,
+      pet: pet is _i5.Animal? ? pet : this.pet?.copyWith(),
+      priorityHistory:
+          priorityHistory ?? this.priorityHistory.map((e0) => e0).toList(),
     );
   }
 
@@ -125,6 +172,10 @@ class UserProfile implements _i1.SerializableModel {
       'karma': karma.toJson(),
       'deviceId': deviceId.toJson(),
       if (bio != null) 'bio': bio,
+      'priority': priority.toJson(),
+      if (favouriteColour != null) 'favouriteColour': favouriteColour?.toJson(),
+      if (pet != null) 'pet': pet?.toJson(),
+      'priorityHistory': priorityHistory.toJson(valueToJson: (v) => v.toJson()),
     };
   }
 

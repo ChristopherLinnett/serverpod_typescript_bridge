@@ -105,6 +105,10 @@ class Protocol extends _i1.SerializationManagerServer {
     if (t == _i1.getType<_i8.UserProfile?>()) {
       return (data != null ? _i8.UserProfile.fromJson(data) : null) as T;
     }
+    if (t == List<_i7.Priority>) {
+      return (data as List).map((e) => deserialize<_i7.Priority>(e)).toList()
+          as T;
+    }
     if (t == List<int>) {
       return (data as List).map((e) => deserialize<int>(e)).toList() as T;
     }

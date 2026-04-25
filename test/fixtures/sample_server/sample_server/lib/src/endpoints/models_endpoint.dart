@@ -35,6 +35,10 @@ class ModelsEndpoint extends Endpoint {
       karma: profile.karma,
       deviceId: profile.deviceId,
       bio: profile.bio,
+      priority: profile.priority,
+      favouriteColour: profile.favouriteColour,
+      pet: profile.pet,
+      priorityHistory: profile.priorityHistory,
       scope: scope,
     );
   }
