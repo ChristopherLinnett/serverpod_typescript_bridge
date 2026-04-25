@@ -6,3 +6,5 @@ export * from './serialization.js';
 export * from './http_transport.js';
 export * from './endpoint.js';
 export * from './client.js';
+export * from './ws_messages.js';
+export * from './ws_transport.js';

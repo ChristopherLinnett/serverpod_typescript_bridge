@@ -1,4 +1,5 @@
 import type { HttpTransport, UnaryCallOptions } from './http_transport.js';
+import type { ClientMethodStreamManager } from './ws_transport.js';
 
 /**
  * Bridges a generated `EndpointXxx` class to whatever transport its
@@ -14,6 +15,17 @@ export interface EndpointCaller {
     decode: (raw: unknown) => T,
     options?: UnaryCallOptions,
   ): Promise<T>;
+
+  /**
+   * Open a server-side streaming method. Implementations route through
+   * the parent's [ClientMethodStreamManager].
+   */
+  callStreamingServerEndpoint<T>(
+    endpoint: string,
+    method: string,
+    args: Record<string, unknown>,
+    decode: (raw: unknown) => T,
+  ): Promise<AsyncIterable<T>>;
 }
 
 /**
@@ -51,6 +63,20 @@ export abstract class ModuleEndpointCaller implements EndpointCaller {
       options,
     );
   }
+
+  callStreamingServerEndpoint<T>(
+    endpoint: string,
+    method: string,
+    args: Record<string, unknown>,
+    decode: (raw: unknown) => T,
+  ): Promise<AsyncIterable<T>> {
+    return this.parent.callStreamingServerEndpoint(
+      endpoint,
+      method,
+      args,
+      decode,
+    );
+  }
 }
 
 /**
@@ -59,7 +85,10 @@ export abstract class ModuleEndpointCaller implements EndpointCaller {
  * delegates here).
  */
 export class HttpEndpointCaller implements EndpointCaller {
-  constructor(private readonly transport: HttpTransport) {}
+  constructor(
+    private readonly transport: HttpTransport,
+    private readonly streams?: ClientMethodStreamManager,
+  ) {}
 
   callServerEndpoint<T>(
     endpoint: string,
@@ -69,5 +98,25 @@ export class HttpEndpointCaller implements EndpointCaller {
     options?: UnaryCallOptions,
   ): Promise<T> {
     return this.transport.call(endpoint, method, args, decode, options);
+  }
+
+  callStreamingServerEndpoint<T>(
+    endpoint: string,
+    method: string,
+    args: Record<string, unknown>,
+    decode: (raw: unknown) => T,
+  ): Promise<AsyncIterable<T>> {
+    if (!this.streams) {
+      throw new Error(
+        'No ClientMethodStreamManager configured — streaming endpoints ' +
+          'require ServerpodClientShared with the streaming runtime wired.',
+      );
+    }
+    return this.streams.openOutputStream<T>({
+      endpoint,
+      method,
+      args,
+      decode,
+    });
   }
 }
