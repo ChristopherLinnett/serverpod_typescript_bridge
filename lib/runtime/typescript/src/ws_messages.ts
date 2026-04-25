@@ -63,8 +63,15 @@ export interface MethodStreamMessageData {
    * the server sent to the client.
    */
   parameter?: string;
-  /** `{ className, data }` envelope per `wrapWithClassName` in Dart. */
-  object: { className: string; data: Record<string, unknown> };
+  /**
+   * `{ className, data }` envelope per `wrapWithClassName` in Dart.
+   *
+   * `data` is `unknown` rather than `Record<…>` because stream values
+   * can serialize to a primitive, an array, or an object depending on
+   * the type mapper output. The receiver-side decoder is responsible
+   * for validating the actual JSON shape.
+   */
+  object: { className: string; data: unknown };
 }
 
 export interface MethodStreamSerializableExceptionData {

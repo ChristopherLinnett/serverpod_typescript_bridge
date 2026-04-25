@@ -135,8 +135,13 @@ class ModelEmitter {
   }
 
   /// Walks a [TypeDefinition] recursively (descending into generics)
-  /// and yields every project-class name referenced. Skips primitives,
-  /// collections (List/Set/Map/Future/Stream), and any self-reference.
+  /// and adds every project-class name referenced to [out]. Primitives
+  /// and collection wrappers are skipped because they're not in
+  /// [_allClassNames].
+  ///
+  /// Self-references ARE collected here; [_buildImportLines] strips the
+  /// owner's own className before writing the import lines so the file
+  /// doesn't import itself.
   void _collectReferencedProjectTypes(
     TypeDefinition type,
     Set<String> out,

@@ -210,9 +210,14 @@ class TsTypeMapper {
     // we must not emit cross-package imports for it. (When generating
     // a module client, the project's own classes ARE in the module
     // index too; this ordering keeps that case from self-importing.)
-    final isLocal = projectClassNames.isEmpty ||
-        projectClassNames.contains(className);
-    if (isLocal) return _mapLocalProjectType(className);
+    //
+    // We deliberately do NOT default-to-local when the set is empty:
+    // a project with zero local models that calls module endpoints
+    // would otherwise produce `p.AuthSuccess.fromJson(...)` and break
+    // tsc, since there's no local protocol barrel to namespace into.
+    if (projectClassNames.contains(className)) {
+      return _mapLocalProjectType(className);
+    }
 
     // 2. Module-defined type? Emit the bare TS name; the emitter is
     // responsible for the matching `import { Name } from '<pkg>';`

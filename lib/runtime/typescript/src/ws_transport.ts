@@ -16,10 +16,15 @@ import {
  * server-side method. The encoder turns each value into the
  * `{ className, data }` envelope the server expects on
  * `MethodStreamMessage.object`.
+ *
+ * `data` is intentionally `unknown`: stream values can serialize to a
+ * primitive, an array, or a record (see `r.encodeList`/etc.), so the
+ * generated encoder isn't always producing a JSON object. The wire
+ * payload preserves whatever shape the type mapper emits.
  */
 export interface InputStreamSpec<T = unknown> {
   iterable: AsyncIterable<T>;
-  encode: (value: T) => { className: string; data: Record<string, unknown> };
+  encode: (value: T) => { className: string; data: unknown };
 }
 
 /**
@@ -43,7 +48,15 @@ export class ClientMethodStreamManager {
   async open(): Promise<void> {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) return;
     if (this.socketReady) return this.socketReady;
-    this.socketReady = this._connect();
+    // Cache the connect promise so concurrent open() calls share it.
+    // Crucially, clear the cache on rejection so callers can retry —
+    // otherwise a single transient failure would poison every future
+    // call by always returning the same rejected promise.
+    this.socketReady = this._connect().catch((e) => {
+      this.socketReady = undefined;
+      this.socket = undefined;
+      throw e;
+    });
     return this.socketReady;
   }
 
@@ -58,6 +71,20 @@ export class ClientMethodStreamManager {
         () => reject(new ServerpodClientException('WebSocket error', 0)),
         { once: true },
       );
+      // A 'close' arriving before 'open' (auth failure, immediate
+      // server reject) would otherwise leave this await hanging
+      // forever. Treat it as a failed handshake.
+      ws.addEventListener(
+        'close',
+        () =>
+          reject(
+            new ServerpodClientException(
+              'WebSocket closed before open',
+              0,
+            ),
+          ),
+        { once: true },
+      );
     });
     ws.addEventListener('message', (e) => this._onMessage(String(e.data)));
     ws.addEventListener('close', () => this._onClose());
@@ -68,8 +95,12 @@ export class ClientMethodStreamManager {
       ? this.host.slice(0, -1)
       : this.host;
     let url = base.replace(/^http/, 'ws') + '/v1/websocket';
-    const auth = await this.authProvider?.getAuthHeaderValue();
-    if (auth) url += `?auth=${encodeURIComponent(auth)}`;
+    // The auth provider returns a wrapped header value (e.g.
+    // `Bearer <key>`). Serverpod's WS contract expects the raw key in
+    // the `?auth=` query param, so strip the scheme prefix if present.
+    const headerValue = await this.authProvider?.getAuthHeaderValue();
+    const rawKey = _extractRawAuthKey(headerValue);
+    if (rawKey) url += `?auth=${encodeURIComponent(rawKey)}`;
     return url;
   }
 
@@ -100,18 +131,53 @@ export class ClientMethodStreamManager {
         this.handlers.get(data.connectionId)?.onClose();
         return;
       }
-      // ping/pong handled at the WebSocket layer; bad_request surfaces
-      // via the connection-level error path.
+      case 'ping':
+        // Serverpod uses app-level ping/pong (browsers can't reply to
+        // WS control frames). Echo back so the server doesn't drop us.
+        this.socket?.send(buildEnvelope('pong', {}));
+        return;
+      case 'pong':
+        // No keepalive timer yet; just consume.
+        return;
+      case 'bad_request': {
+        // The server can't parse what we sent. Tear every active
+        // handler down with a connection-level error rather than
+        // silently leaking pending iterators.
+        const err = new ServerpodClientException(
+          'Server reported bad_request on the WebSocket; closing',
+          400,
+        );
+        this._failAllHandlers(err);
+        this.socket?.close();
+        return;
+      }
       default:
         return;
     }
   }
 
   private _onClose(): void {
-    for (const h of this.handlers.values()) h.onClose();
+    // Reject any pending open handshakes so callers awaiting
+    // `openResponse` don't hang forever after a mid-handshake drop.
+    const err = new ServerpodClientException(
+      'WebSocket closed before stream completed',
+      0,
+    );
+    for (const h of this.handlers.values()) {
+      h.failOpenIfPending(err);
+      h.onClose();
+    }
     this.handlers.clear();
     this.socket = undefined;
     this.socketReady = undefined;
+  }
+
+  private _failAllHandlers(err: unknown): void {
+    for (const h of this.handlers.values()) {
+      h.failOpenIfPending(err);
+      h.onError(err);
+    }
+    this.handlers.clear();
   }
 
   /**
@@ -146,8 +212,15 @@ export class ClientMethodStreamManager {
 
     const handler = new _StreamHandler(opts.decode, this.serializer);
     this.handlers.set(connectionId, handler);
-    this.socket!.send(buildEnvelope('open_method_stream_command', command));
-    await handler.openResponse;
+    try {
+      this.socket!.send(buildEnvelope('open_method_stream_command', command));
+      await handler.openResponse;
+    } catch (e) {
+      // Failed open → eject the handler so it doesn't keep routing
+      // messages to a stream the caller never receives.
+      this.handlers.delete(connectionId);
+      throw e;
+    }
 
     // Spawn a feeder per input stream. Each runs in the background
     // for the lifetime of the call.
@@ -247,6 +320,11 @@ export class ClientMethodStreamManager {
   }
 }
 
+type _Waiter = {
+  resolve: (v: IteratorResult<unknown>) => void;
+  reject: (e: unknown) => void;
+};
+
 class _StreamHandler {
   constructor(
     private readonly decode: (raw: unknown) => unknown,
@@ -254,9 +332,10 @@ class _StreamHandler {
   ) {}
 
   private readonly _values: unknown[] = [];
-  private readonly _waiters: Array<(v: IteratorResult<unknown>) => void> = [];
+  private readonly _waiters: _Waiter[] = [];
   private _error: unknown | undefined;
   private _closed = false;
+  private _openSettled = false;
   private _openResolve: (() => void) | undefined;
   private _openReject: ((e: unknown) => void) | undefined;
 
@@ -266,33 +345,52 @@ class _StreamHandler {
   });
 
   onOpenResponse(data: OpenMethodStreamResponseData): void {
+    this._openSettled = true;
     if (data.responseType === 'success') {
       this._openResolve?.();
-    } else {
-      this._openReject?.(
-        new ServerpodClientException(
-          `Failed to open stream: ${data.responseType}`,
-          0,
-        ),
-      );
+      return;
     }
+    this._openReject?.(_openErrorFor(data.responseType));
+  }
+
+  /// Called by the manager when the connection drops before the
+  /// open-response arrives. Without this, callers can hang forever
+  /// awaiting `openResponse`.
+  failOpenIfPending(err: unknown): void {
+    if (this._openSettled) return;
+    this._openSettled = true;
+    this._openReject?.(err);
   }
 
   onValue(data: MethodStreamMessageData): void {
     if (this._closed) return;
-    const value = this.decode(data.object.data);
+    // Pass the full envelope so the decoder sees both `className` and
+    // `data` — the generated `Protocol.deserializeByClassName` walks
+    // the envelope; passing only `data` discards polymorphic dispatch.
+    const value = this.decode(data.object);
     this._dispatch(value);
   }
 
   onException(data: MethodStreamSerializableExceptionData): void {
     const err = this.serializer.deserializeByClassName(data.object);
-    this._error = err instanceof Error
-      ? err
-      : new ServerpodClientException(
-          `Stream exception: ${data.object.className}`,
-          0,
-        );
-    this._dispatchEnd();
+    this.onError(
+      err instanceof Error
+        ? err
+        : new ServerpodClientException(
+            `Stream exception: ${data.object.className}`,
+            0,
+          ),
+    );
+  }
+
+  /// Terminates the stream with an error. Any already-awaiting
+  /// consumers receive the error through their `next()` rejection;
+  /// later consumers re-throw the cached `_error` synchronously.
+  onError(err: unknown): void {
+    if (this._closed) return;
+    this._error = err;
+    this._closed = true;
+    this._dispatchError(err);
   }
 
   onClose(): void {
@@ -304,7 +402,7 @@ class _StreamHandler {
   private _dispatch(value: unknown): void {
     const waiter = this._waiters.shift();
     if (waiter) {
-      waiter({ value, done: false });
+      waiter.resolve({ value, done: false });
     } else {
       this._values.push(value);
     }
@@ -312,7 +410,13 @@ class _StreamHandler {
 
   private _dispatchEnd(): void {
     while (this._waiters.length > 0) {
-      this._waiters.shift()!({ value: undefined, done: true });
+      this._waiters.shift()!.resolve({ value: undefined, done: true });
+    }
+  }
+
+  private _dispatchError(err: unknown): void {
+    while (this._waiters.length > 0) {
+      this._waiters.shift()!.reject(err);
     }
   }
 
@@ -322,9 +426,10 @@ class _StreamHandler {
       [Symbol.asyncIterator](): AsyncIterator<T> {
         return {
           next(): Promise<IteratorResult<T>> {
-            return new Promise<IteratorResult<unknown>>((resolve) => {
+            return new Promise<IteratorResult<unknown>>((resolve, reject) => {
               if (self._error) {
-                throw self._error;
+                reject(self._error);
+                return;
               }
               if (self._values.length > 0) {
                 resolve({ value: self._values.shift(), done: false });
@@ -334,7 +439,7 @@ class _StreamHandler {
                 resolve({ value: undefined, done: true });
                 return;
               }
-              self._waiters.push(resolve);
+              self._waiters.push({ resolve, reject });
             }) as Promise<IteratorResult<T>>;
           },
           async return(value): Promise<IteratorResult<T>> {
@@ -346,4 +451,51 @@ class _StreamHandler {
       },
     };
   }
+}
+
+/// Maps a non-success `responseType` from the server's open-stream
+/// response onto the closest HTTP-style status so callers can
+/// `instanceof`-check against the existing exception hierarchy.
+function _openErrorFor(responseType: string): ServerpodClientException {
+  switch (responseType) {
+    case 'endpointNotFound':
+      return new ServerpodClientException(
+        'Endpoint not found',
+        404,
+      );
+    case 'authenticationFailed':
+      return new ServerpodClientException(
+        'Authentication failed',
+        401,
+      );
+    case 'authorizationDeclined':
+      return new ServerpodClientException(
+        'Authorization declined',
+        403,
+      );
+    case 'invalidArguments':
+      return new ServerpodClientException(
+        'Invalid arguments',
+        400,
+      );
+    default:
+      return new ServerpodClientException(
+        `Failed to open stream: ${responseType}`,
+        0,
+      );
+  }
+}
+
+/// Strips a header-style prefix (`Bearer foo`, `Basic abc=`) from
+/// [headerValue] and returns just the raw key the WS query expects.
+function _extractRawAuthKey(
+  headerValue: string | null | undefined,
+): string | undefined {
+  if (!headerValue) return undefined;
+  const trimmed = headerValue.trim();
+  if (!trimmed) return undefined;
+  const sep = trimmed.indexOf(' ');
+  if (sep === -1) return trimmed;
+  const rest = trimmed.slice(sep + 1).trim();
+  return rest || undefined;
 }

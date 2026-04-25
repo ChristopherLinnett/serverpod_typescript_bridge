@@ -55,10 +55,15 @@ class ProtocolLoader {
         serverRootDir: serverDirectory.path,
         interactive: false,
       );
-    } catch (e) {
-      throw ProtocolLoaderException._(
-        ProtocolLoaderPhase.config,
-        'Failed to load GeneratorConfig from ${serverDirectory.path}: $e',
+    } catch (e, st) {
+      // Preserve the original stack trace so config-load failures
+      // remain debuggable; we only translate the exception type.
+      Error.throwWithStackTrace(
+        ProtocolLoaderException._(
+          ProtocolLoaderPhase.config,
+          'Failed to load GeneratorConfig from ${serverDirectory.path}: $e',
+        ),
+        st,
       );
     }
   }
