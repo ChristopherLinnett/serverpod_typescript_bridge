@@ -143,10 +143,10 @@ void main() {
       _requireServerFile('lib/src/models/cat.spy.yaml');
     });
 
-    test('priority enum uses the default byIndex serialization', () async {
+    test('priority enum opts into byIndex serialization', () async {
       final src = await _readServerFile('lib/src/models/priority.spy.yaml');
       expect(src, contains('enum: Priority'));
-      expect(src, isNot(contains('serialized: byName')),
+      expect(src, contains('serialized: byIndex'),
           reason: 'priority.spy.yaml is the byIndex variant');
     });
 

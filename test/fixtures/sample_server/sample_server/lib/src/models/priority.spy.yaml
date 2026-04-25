@@ -1,5 +1,6 @@
-### Task priority. Default `byIndex` serialization (wire form is the int index).
+### Task priority. `byIndex` serialization (wire form is the int index).
 enum: Priority
+serialized: byIndex
 values:
   ### Lowest priority.
   - low

@@ -32,6 +32,12 @@ class EndpointAuth extends _i1.EndpointRef {
   String get name => 'auth';
 
   /// Echo the authenticated user's identifier.
+  ///
+  /// The `'anonymous'` fallback is unreachable in production (the
+  /// `requireLogin` gate already rejects unauthenticated calls), but keeps
+  /// this fixture self-contained: tests that pass a non-authenticated
+  /// session via `serverpod_test` still get a deterministic response
+  /// instead of a null-deref crash.
   _i2.Future<String> whoAmI() => caller.callServerEndpoint<String>(
     'auth',
     'whoAmI',
@@ -326,10 +332,12 @@ class EndpointPrimitives extends _i1.EndpointRef {
       );
 }
 
-/// Endpoint that exposes a method as a public, unauthenticated call via
-/// `@unauthenticatedClientCall`.
+/// Endpoint that exposes both an explicitly-public method (via
+/// `@unauthenticatedClientCall`) and an implicitly-public method (no
+/// annotation, no `requireLogin` override).
 ///
-/// The generator must surface `authenticated: false` in the call site.
+/// The generator must surface `authenticated: false` for the annotated
+/// method and `authenticated: true` (default) for the rest.
 /// {@category Endpoint}
 class EndpointPublic extends _i1.EndpointRef {
   EndpointPublic(_i1.EndpointCaller caller) : super(caller);
@@ -337,7 +345,9 @@ class EndpointPublic extends _i1.EndpointRef {
   @override
   String get name => 'public';
 
-  /// Health-check ping. Public — no auth header required.
+  /// Health-check ping. Explicitly public — `@unauthenticatedClientCall`
+  /// flips this to `authenticated: false` in the generated client even
+  /// when the class otherwise requires login.
   _i2.Future<String> ping() => caller.callServerEndpoint<String>(
     'public',
     'ping',
@@ -345,7 +355,9 @@ class EndpointPublic extends _i1.EndpointRef {
     authenticated: false,
   );
 
-  /// Echo a name back. No auth required.
+  /// Echo a name back. Implicitly public: this class does not override
+  /// `requireLogin`, so the default (no auth required) applies. Kept as
+  /// the contrast surface against [ping].
   _i2.Future<String> hello(String name) => caller.callServerEndpoint<String>(
     'public',
     'hello',
