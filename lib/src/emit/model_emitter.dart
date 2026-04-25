@@ -27,28 +27,64 @@ class ModelEmitter {
   final GeneratedFileTracker tracker;
   final TsTypeMapper mapper;
 
-  /// Emits every non-sealed model in [models], plus a `protocol/index.ts`
-  /// barrel re-exporting them all. Returns the list of emitted basenames
-  /// (without the `.ts` suffix), in alphabetical order.
+  /// Emits every model in [models], plus a `protocol/index.ts` barrel
+  /// re-exporting them all. Sealed bases get an extra discriminated-union
+  /// type alias and a static `fromJson` that dispatches on `__className__`.
+  /// Returns the list of emitted basenames (without the `.ts` suffix),
+  /// in alphabetical order.
   List<String> emitAll(List<SerializableModelDefinition> models) {
+    final modelClasses = models.whereType<ModelClassDefinition>().toList();
+    final classByName = {for (final m in modelClasses) m.className: m};
+    final subclassesBySealedParent = <String, List<ModelClassDefinition>>{};
+    for (final m in modelClasses) {
+      final sealedAncestor = _sealedAncestorName(m, classByName);
+      if (sealedAncestor != null && sealedAncestor != m.className) {
+        subclassesBySealedParent
+            .putIfAbsent(sealedAncestor, () => [])
+            .add(m);
+      }
+    }
+
     final emitted = <String>[];
-    final classNames = <String>[];
     for (final model in models) {
       if (model is ModelClassDefinition) {
-        if (model.isSealed) continue; // Issue #6.
-        emitted.add(_emitClass(model));
-        classNames.add(model.className);
+        if (model.isSealed) {
+          emitted.add(_emitSealedBase(
+            model,
+            subclassesBySealedParent[model.className] ?? const [],
+          ));
+        } else {
+          emitted.add(_emitClass(
+            model,
+            sealedAncestor: _sealedAncestorName(model, classByName),
+          ));
+        }
       } else if (model is ExceptionClassDefinition) {
         emitted.add(_emitException(model));
-        classNames.add(model.className);
       } else if (model is EnumDefinition) {
         emitted.add(_emitEnum(model));
-        classNames.add(model.className);
       }
     }
     emitted.sort();
     _emitProtocolBarrel(emitted);
     return emitted;
+  }
+
+  /// Walks the inheritance chain looking for the nearest sealed ancestor,
+  /// or returns null if there isn't one. Includes the model itself if it
+  /// is sealed.
+  String? _sealedAncestorName(
+    ModelClassDefinition model,
+    Map<String, ModelClassDefinition> byName,
+  ) {
+    ModelClassDefinition? cursor = model;
+    while (cursor != null) {
+      if (cursor.isSealed) return cursor.className;
+      final parent = cursor.parentClass;
+      if (parent == null) return null;
+      cursor = byName[parent.className];
+    }
+    return null;
   }
 
   void _emitProtocolBarrel(List<String> filenames) {
@@ -60,7 +96,66 @@ class ModelEmitter {
     _writeFile('index.ts', w.toString());
   }
 
-  String _emitClass(ModelClassDefinition model) {
+  String _emitSealedBase(
+    ModelClassDefinition model,
+    List<ModelClassDefinition> subclasses,
+  ) {
+    final w = TsWriter()
+      ..writeRaw(_generatedHeader)
+      ..writeln("import * as r from '../runtime/index.js';");
+    for (final sub in subclasses) {
+      w.writeln("import { ${sub.className} } from './${_filenameStemOf(sub.className)}.js';");
+    }
+    w.blankLine();
+
+    // Discriminated-union type alias.
+    final union = subclasses.isEmpty
+        ? 'never'
+        : subclasses.map((s) => s.className).join(' | ');
+    w.docComment(model.documentation?.join('\n'));
+    w.writeln('export type ${model.className} = $union;');
+    w.blankLine();
+
+    // Abstract base class — non-instantiable; carries the polymorphic
+    // `fromJson` dispatcher and a shared `toJson` contract.
+    w.writeln(
+      'export abstract class ${model.className}Base implements r.SerializableModel {',
+    );
+    w.indent(() {
+      w.writeln('abstract toJson(): Record<string, unknown>;');
+      w.blankLine();
+      w.writeln(
+        'static fromJson(json: Record<string, unknown>): ${model.className} {',
+      );
+      w.indent(() {
+        w.writeln(
+          "const className = json['__className__'] as string | undefined;",
+        );
+        w.writeln('switch (className) {');
+        w.indent(() {
+          for (final sub in subclasses) {
+            // Module prefix-aware: match both bare and `<module>.<Name>`.
+            w.writeln(
+              "case '${sub.className}': return ${sub.className}.fromJson(json);",
+            );
+          }
+          w.writeln(
+            "default: throw new Error('Unknown ${model.className} subtype: ' + className);",
+          );
+        });
+        w.writeln('}');
+      });
+      w.writeln('}');
+    });
+    w.writeln('}');
+
+    return _writeFile(_filenameOf(model.className), w.toString());
+  }
+
+  String _emitClass(
+    ModelClassDefinition model, {
+    String? sealedAncestor,
+  }) {
     final w = TsWriter()
       ..writeRaw(_generatedHeader)
       ..writeln(
@@ -73,7 +168,18 @@ class ModelEmitter {
         .toList();
 
     w.docComment(model.documentation?.join('\n'));
-    w.writeln('export class ${model.className} implements r.SerializableModel {');
+    if (sealedAncestor != null) {
+      w.writeln(
+        "import { ${sealedAncestor}Base } from './${_filenameStemOf(sealedAncestor)}.js';",
+      );
+      w.writeln(
+        'export class ${model.className} extends ${sealedAncestor}Base implements r.SerializableModel {',
+      );
+    } else {
+      w.writeln(
+        'export class ${model.className} implements r.SerializableModel {',
+      );
+    }
     w.indent(() {
       // Public fields
       for (final field in fields) {
@@ -93,6 +199,7 @@ class ModelEmitter {
       });
       w.writeln('}) {');
       w.indent(() {
+        if (sealedAncestor != null) w.writeln('super();');
         for (final field in fields) {
           w.writeln('this.${field.name} = init.${field.name};');
         }
@@ -342,11 +449,12 @@ class ModelEmitter {
     return _writeFile(_filenameOf(model.className), w.toString());
   }
 
-  String _filenameOf(String className) {
-    final snake = className
+  String _filenameOf(String className) => '${_filenameStemOf(className)}.ts';
+
+  String _filenameStemOf(String className) {
+    return className
         .replaceAllMapped(RegExp(r'[A-Z]'), (m) => '_${m[0]!.toLowerCase()}')
         .replaceFirst(RegExp(r'^_'), '');
-    return '$snake.ts';
   }
 
   String _enumMemberName(String name) {
