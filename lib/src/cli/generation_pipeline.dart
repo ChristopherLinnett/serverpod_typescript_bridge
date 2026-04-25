@@ -57,24 +57,29 @@ class GenerationPipeline {
       Directory(p.join(outputDir.path, 'src', 'endpoints')),
     ]);
 
-    final mapperConfig = _MapperConfig.fromIr(ir, moduleIndex);
+    // Scope the module index for THIS run by stripping out the project's
+    // own classes. `ModuleClassIndex.build` walks every discovered
+    // module — including the one we're about to emit — so without
+    // this filter `ModuleImportLines` would treat the project's own
+    // classes as foreign module classes and emit a self-referential
+    // cross-package import on top of the legitimate local cross-file
+    // import (and the protocol switch would emit a duplicate case
+    // dispatching to the project's own npm name).
+    final localNames = {for (final m in ir.models) m.className};
+    final scopedIndex = moduleIndex.excluding(localNames);
+    final mapperConfig = _MapperConfig.fromIr(ir, scopedIndex);
 
-    // Local types always shadow the module index — see
-    // `TsTypeMapper._mapModelOrEnum`. Filter them out before we ask
-    // the index for `file:..` deps or protocol-switch entries; they
-    // belong to THIS package, not to a sibling module.
-    final localNames = mapperConfig.projectClassNames;
     final referencedClassNames = IrWalker.allReferencedClassNames(ir);
     final referencedExternalNames = referencedClassNames.difference(localNames);
 
-    final moduleDeps = moduleIndex.referencedPackages(
+    final moduleDeps = scopedIndex.referencedPackages(
       referencedClassNames: referencedExternalNames,
       consumerDir: outputDir,
     );
 
     final referencedModuleClassNames = <String>{
       for (final name in referencedExternalNames)
-        if (moduleIndex.layoutFor(name) != null) name,
+        if (scopedIndex.layoutFor(name) != null) name,
     };
 
     final scaffold = ScaffoldEmitter(
@@ -104,7 +109,7 @@ class GenerationPipeline {
       outputDir: outputDir,
       tracker: tracker,
       config: config,
-      moduleIndex: moduleIndex,
+      moduleIndex: scopedIndex,
       referencedModuleClassNames: referencedModuleClassNames,
     ).emit(endpoints: ir.endpoints, models: ir.models);
 

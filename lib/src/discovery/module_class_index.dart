@@ -94,6 +94,34 @@ class ModuleClassIndex {
         enumClassNames);
   }
 
+  /// Returns a copy of this index with every name in [classNames]
+  /// removed. Used by [GenerationPipeline] to scope the index for the
+  /// project currently being generated — the project's own classes
+  /// belong in its local protocol barrel, NOT as cross-package imports
+  /// pointing back at itself.
+  ///
+  /// The `ModuleClassIndex.build` pass walks every discovered module
+  /// (including the one we're emitting), so without this filter the
+  /// per-emit `ModuleImportLines` would treat the project's own
+  /// classes as foreign module classes and produce both a local
+  /// cross-file import AND a self-referential cross-package import.
+  ModuleClassIndex excluding(Set<String> classNames) {
+    if (classNames.isEmpty) return this;
+    final filteredLayout = <String, ModuleClientLayout>{
+      for (final entry in _classToLayout.entries)
+        if (!classNames.contains(entry.key)) entry.key: entry.value,
+    };
+    final filteredSealed = <String>{
+      for (final n in _sealedClassNames)
+        if (!classNames.contains(n)) n,
+    };
+    final filteredEnum = <String>{
+      for (final n in _enumClassNames)
+        if (!classNames.contains(n)) n,
+    };
+    return ModuleClassIndex._(filteredLayout, filteredSealed, filteredEnum);
+  }
+
   bool get isEmpty => _classToLayout.isEmpty;
 
   /// Returns the layout for [className] if it's defined in any module,

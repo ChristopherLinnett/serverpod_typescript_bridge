@@ -161,4 +161,66 @@ void main() {
 
     expect(lines, isEmpty);
   });
+
+  group('ModuleClassIndex.excluding (per-run scoping)', () {
+    test('strips named classes from layoutFor / sealed / enum lookups', () {
+      final auth = layoutFor('auth_server', 'auth_ts');
+      final index = ModuleClassIndex.forTesting(
+        classToLayout: {'AuthUser': auth, 'AuthRole': auth, 'Animal': auth},
+        sealedClassNames: {'Animal'},
+        enumClassNames: {'AuthRole'},
+      );
+
+      final scoped = index.excluding({'AuthUser', 'Animal'});
+      expect(scoped.layoutFor('AuthUser'), isNull);
+      expect(scoped.layoutFor('Animal'), isNull);
+      expect(scoped.layoutFor('AuthRole'), isNotNull);
+      expect(scoped.isSealed('Animal'), isFalse);
+      expect(scoped.isEnum('AuthRole'), isTrue);
+    });
+
+    test('returns the same instance when the exclusion set is empty', () {
+      final auth = layoutFor('auth_server', 'auth_ts');
+      final index = ModuleClassIndex.forTesting(
+        classToLayout: {'AuthUser': auth},
+      );
+      expect(identical(index.excluding(const {}), index), isTrue,
+          reason: 'no-op exclude should avoid an unnecessary copy');
+    });
+
+    test(
+        'ModuleImportLines on a scoped index never emits a self-referential '
+        'cross-package import for the project being generated', () {
+      // Scenario: generating `auth_core` itself. The full index contains
+      // its own classes (AuthUser, UserProfile) PLUS a separate module
+      // (chat) it depends on. Per-run scoping must strip the local names
+      // so the model files don't import from their own npm package.
+      final authCore = layoutFor('auth_core_server', 'auth_core_ts');
+      final chat = layoutFor('chat_server', 'chat_ts');
+      final fullIndex = ModuleClassIndex.forTesting(
+        classToLayout: {
+          'AuthUser': authCore,
+          'UserProfile': authCore,
+          'ChatMessage': chat,
+        },
+      );
+
+      final scoped = fullIndex.excluding({'AuthUser', 'UserProfile'});
+      final lines = ModuleImportLines(scoped).forTypes([
+        simple('AuthUser'), // local — must NOT appear in any import
+        simple('UserProfile'), // local — must NOT appear
+        simple('ChatMessage'), // foreign — should appear once
+      ]);
+
+      expect(lines, ["import { ChatMessage } from 'chat_ts';"],
+          reason:
+              'local classes must not produce cross-package imports back '
+              'to the package being generated');
+      expect(
+        lines.any((l) => l.contains('auth_core_ts')),
+        isFalse,
+        reason: 'no self-referential auth_core_ts import should appear',
+      );
+    });
+  });
 }

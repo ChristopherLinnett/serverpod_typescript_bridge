@@ -131,6 +131,10 @@ class ModelEmitter {
       final stem = f.replaceAll(RegExp(r'\.ts$'), '');
       w.writeln("export * from './$stem.js';");
     }
+    // Empty barrels need an `export {};` so TS treats the file as a
+    // module — otherwise `import * as p from '../protocol/index.js'`
+    // fails with `is not a module`.
+    if (filenames.isEmpty) w.writeln('export {};');
     _writeFile('index.ts', w.toString());
   }
 

@@ -24,3 +24,4 @@ paths:
   - test/module_client_layout_test.dart
   - test/module_import_lines_test.dart
   - test/client_emitter_modules_test.dart
+  - test/empty_barrel_emission_test.dart
