@@ -79,8 +79,10 @@ We:
 lib/src/discovery/
 ├── module_discoverer.dart       — walks `.dart_tool/package_config.json` upward from the
 │                                  server dir, filters to packages whose
-│                                  `config/generator.yaml` declares `type: module`. Skips
-│                                  the project itself when it is module-typed.
+│                                  `config/generator.yaml` declares `type: module`. Always
+│                                  skips the project package itself (matched by canonical
+│                                  path) so a module-typed project never rediscovers and
+│                                  re-generates itself.
 ├── module_client_layout.dart    — per-module output dir + npm name resolution; default
 │                                  `<server>/../<module-stripped-of-_server>_typescript_client/`,
 │                                  overridable via `typescript_client_modules:` in
@@ -306,7 +308,7 @@ The runtime's `SerializationManager` mirrors `serverpod_serialization`:
 
 - **HTTP unary:** `POST <host>/<endpointName>`, body = `JSON.stringify({ method: '<methodName>', ...args })` after each value is converted to wire form. Status-mapped error envelopes (400/401/403/404/500) are decoded into their TS exception subclasses; typed `{className, data}` envelopes decode through `Protocol.deserializeByClassName`.
 - **Auth header:** `Authorization: <wrappedAuthValue>`. Suppressed when the call site sets `{ authenticated: false }`. If the provider implements `RefreshableClientAuthKeyProvider` and the server returns 401, the runtime calls `refresh()` once and retries.
-- **WebSocket streaming:** `ws://<host>/v1/websocket?auth=<rawKey>` (the runtime strips a `Bearer ` / `Basic ` prefix from the auth header value before putting it in the query). Messages use a `{type, data}` envelope; `OpenMethodStreamCommand` carries `args` as a *double-encoded JSON string* matching the Dart contract. Server-initiated `ping` is replied to with `pong`; `bad_request` fails every active handler with a 400-status exception.
+- **WebSocket streaming:** `ws(s)://<host>/v1/websocket?auth=<rawKey>`. The runtime derives the WS scheme from the configured host via `host.replace(/^http/, 'ws')`, so an `https://` host upgrades to `wss://` automatically; an `http://` host stays plain `ws://`. The runtime also strips a `Bearer ` / `Basic ` prefix from the auth header value before putting it in the query. Messages use a `{type, data}` envelope; `OpenMethodStreamCommand` carries `args` as a *double-encoded JSON string* matching the Dart contract. Server-initiated `ping` is replied to with `pong`; `bad_request` fails every active handler with a 400-status exception.
 - **Primitive encodings:** ISO-8601 UTC for `Date`, integer ms for `Duration`, base64 for `Uint8Array`, string for `BigInt`, list of `{k,v}` for non-string-keyed maps.
 
 These rules are spec'd by `vitest` tests in `lib/runtime/typescript/src/__tests__/`, not by the generator.
