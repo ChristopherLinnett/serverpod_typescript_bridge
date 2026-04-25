@@ -8,17 +8,25 @@ Generate a fully-typed TypeScript client for a Serverpod project — drop-in par
 
 ## Quick start
 
-```bash
-# inside your Serverpod server package
-dart pub add --dev serverpod_typescript_bridge
+The package isn't published to pub.dev yet — install via git ref. Add this to your Serverpod server package's `pubspec.yaml`:
 
-# generate the TS client (runs npm install + npm run build by default,
-# so the output is import-ready)
+```yaml
+dev_dependencies:
+  serverpod_typescript_bridge:
+    git:
+      url: https://github.com/ChristopherLinnett/serverpod_typescript_bridge.git
+      ref: v0.2.4   # or any later tag
+```
+
+Then:
+
+```bash
+cd path/to/your_app_server
+dart pub get
 dart run serverpod_typescript_bridge generate
 ```
 
-Pass `--no-build` if you want source files only (e.g. you're on
-pnpm/yarn/bun, or your CI runs the build step itself).
+`generate` runs `npm install` + `npm run build` for every module client (in dependency order) and then the app client, so the entire graph is import-ready when it exits. Pass `--no-build` to emit source only (e.g. on pnpm/yarn/bun, or in CI pipelines that drive the build step themselves).
 
 This writes a sibling package to your existing Dart client. If your server depends on Serverpod modules, each is generated as an additional sibling and the app client picks them up via `file:..` deps:
 
@@ -41,13 +49,27 @@ my_app/
 
 Pass `--no-gen-modules` to skip recursive module generation (e.g. when module clients are managed separately).
 
-Then in your TS/React app:
+In your TS/React app, install the generated package as a `file:` dep (one-time setup):
+
+```bash
+cd path/to/your_react_app
+npm install ../my_app_typescript_client
+```
+
+Then import and use it:
 
 ```ts
-import { Client } from 'my_app_typescript_client';
+import { Client, GetJoinedDivesRequest } from 'my_app_typescript_client';
 
 const client = new Client('https://api.my-app.com');
-const greeting = await client.greeting.sayHello('world');
+
+// Nullable model fields can be omitted (default to null at construction):
+const dives = await client.dives.getJoinedDives(
+  new GetJoinedDivesRequest({ isCompleted: false, count: 10, offset: 0 }),
+);
+
+// Cross-module types resolve through their generated package:
+import { AuthSuccess } from 'serverpod_auth_idp_typescript_client';
 ```
 
 ## Supported in v0.2
@@ -60,7 +82,7 @@ const greeting = await client.greeting.sayHello('world');
 | `@Deprecated` | ✅ | propagates to JSDoc `@deprecated` |
 | Primitives | ✅ | int, double, String, bool, DateTime, Duration, BigInt, UuidValue, ByteData |
 | Collections | ✅ | `List<T>`, `Set<T>`, `Map<String,V>`, `Map<K,V>` (non-string-keyed wire form) |
-| Nullables | ✅ | `T?` → `T \| null`; `copyWith` honours explicit `null` |
+| Nullables | ✅ | `T?` → `T \| null`; nullable fields are OMITTABLE on model/exception constructor `init` bags (default to `null`); `copyWith` honours explicit `null` vs "leave alone" |
 | Sealed hierarchies | ✅ | discriminated-union TS type + `<Name>Base.fromJson` dispatch on `__className__` |
 | Multi-level sealed | ✅ | every concrete subclass dispatches through every sealed ancestor |
 | Enums | ✅ | both `byIndex` and `byName` |
@@ -102,7 +124,9 @@ Options:
                     Override via `typescript_client_package_path` in
                     `config/generator.yaml`.
       --[no-]build         After emitting source, run `npm install` + `npm run build`
-                           in the output directory so it is import-ready (default: on).
+                           in every generated client (modules first, then the app)
+                           so the entire graph is import-ready (default: on). Build
+                           failures for a module are non-fatal and printed to stderr.
       --[no-]gen-modules   Recursively generate TS clients for every Serverpod
                            module the project depends on, as siblings of the app
                            client (default: on). The app client picks them up via
