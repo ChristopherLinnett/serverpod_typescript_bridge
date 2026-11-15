@@ -1,0 +1,13 @@
+### Vector and geography values.
+class: Embedding
+fields:
+  ### A dense vector.
+  vec: Vector(3)
+  ### A half-precision vector.
+  half: HalfVector(3)
+  ### A sparse vector.
+  sparse: SparseVector(3)
+  ### A bit vector.
+  bits: Bit(3)
+  ### A point on the globe.
+  point: GeographyPoint?

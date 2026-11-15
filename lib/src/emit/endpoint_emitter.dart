@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:serverpod_cli/analyzer.dart';
 import 'package:serverpod_cli/src/analyzer/dart/definitions.dart';
+import 'package:serverpod_cli/src/config/config.dart' show ModuleConfig;
 
 import '../analyzer/ir_walker.dart';
 import 'generated_file_tracker.dart';
@@ -24,11 +25,21 @@ class EndpointEmitter {
     required this.outputDir,
     required this.tracker,
     required this.mapper,
+    this.modules = const [],
+    this.classNamePrefix = '',
   });
 
   final Directory outputDir;
   final GeneratedFileTracker tracker;
   final TsTypeMapper mapper;
+
+  /// The modules the project depends on; a stream value of a module's type
+  /// travels under `<module>.<Class>`.
+  final List<ModuleConfig> modules;
+
+  /// `<package>.` for a module package, empty for an app: what the server
+  /// expects in front of this package's own enum names in a stream value.
+  final String classNamePrefix;
 
   late final ModuleImportLines _moduleImports =
       ModuleImportLines(mapper.moduleIndex);
@@ -64,7 +75,8 @@ class EndpointEmitter {
     final w = TsWriter()
       ..writeRaw(_generatedHeader)
       ..writeln("import * as r from '../runtime/index.js';")
-      ..writeln("import * as p from '../protocol/index.js';");
+      ..writeln("import * as p from '../protocol/index.js';")
+      ..writeln("import { models } from '../protocol/_registry.js';");
     final moduleImports =
         _moduleImports.forTypes(IrWalker.endpointTypeRefs(ep));
     for (final line in moduleImports) {
@@ -97,42 +109,33 @@ class EndpointEmitter {
 
     final hasStreamReturn = method.returnType.className == 'Stream';
     final inputStreamParams = _inputStreamParams(method);
-    final hasStreamParam = inputStreamParams.isNotEmpty;
-
-    if (hasStreamParam && !hasStreamReturn) {
-      // Per Serverpod's analyzer rules, a Stream<T> input parameter
-      // requires a Future or Stream return — we treat the call shape
-      // as a streaming one. Tag it as output-stream so signature
-      // building emits AsyncIterable<T>.
-      // (In practice all fixture+real-world cases pair input streams
-      // with output streams; this branch is defensive.)
-    }
+    final isStreaming = hasStreamReturn || inputStreamParams.isNotEmpty;
 
     final signature = _buildSignature(
       method,
-      isOutputStream: hasStreamReturn || hasStreamParam,
+      isOutputStream: hasStreamReturn,
       inputStreamParams: inputStreamParams,
     );
 
-    if (hasStreamReturn || hasStreamParam) {
-      // Streaming methods (output-only or bidirectional) return
-      // AsyncIterable<T> directly (not Promise).
-      w.writeln(
-        '${method.name}(${signature.params}): ${signature.returnType} {',
-      );
-      w.indent(() {
-        _emitStreamingMethodBody(w, ep, method, signature, inputStreamParams);
-      });
-      w.writeln('}');
-      w.blankLine();
-      return;
-    }
-
+    // A streaming method is not `async`: it hands back the iterable (or,
+    // for a `Future` return, the promise of its single value) directly.
     w.writeln(
-      'async ${method.name}(${signature.params}): ${signature.returnType} {',
+      '${isStreaming ? '' : 'async '}${method.name}(${signature.params}): '
+      '${signature.returnType} {',
     );
     w.indent(() {
-      _emitMethodBody(w, ep, method, signature);
+      if (isStreaming) {
+        _emitStreamingMethodBody(
+          w,
+          ep,
+          method,
+          signature,
+          inputStreamParams,
+          returnsStream: hasStreamReturn,
+        );
+      } else {
+        _emitMethodBody(w, ep, method, signature);
+      }
     });
     w.writeln('}');
     w.blankLine();
@@ -153,75 +156,69 @@ class EndpointEmitter {
     EndpointDefinition ep,
     MethodDefinition method,
     _Signature signature,
-    List<ParameterDefinition> inputStreamParams,
-  ) {
+    List<ParameterDefinition> inputStreamParams, {
+    required bool returnsStream,
+  }) {
     final args = _argsObjectExpression(method, excludingNames: {
       for (final p in inputStreamParams) p.name,
     });
     final inner = signature.tsReturnInner;
-    final decode =
-        '(raw: unknown) => ${mapper.map(signature.returnInner).fromJsonExpr('raw')}';
+    final decode = inner == 'void'
+        ? '() => undefined as void'
+        : '(raw: unknown) => ${mapper.map(signature.returnInner).fromJsonExpr('raw')}';
 
-    w.writeln('return this.caller.callStreamingServerEndpoint<$inner>(');
+    // A `Future` return over the stream transport is a stream of at most
+    // one value; `streamResult` is that value.
+    w.writeln(
+      returnsStream
+          ? 'return this.caller.callStreamingServerEndpoint<$inner>('
+          : 'return r.streamResult(this.caller.callStreamingServerEndpoint<$inner>(',
+    );
     w.indent(() {
       w.writeln("'${ep.name}',");
       w.writeln("'${method.name}',");
       w.writeln('$args,');
-      if (inputStreamParams.isEmpty) {
-        w.writeln('$decode,');
-      } else {
-        w.writeln('$decode,');
-        // Build the inputStreams record. Each entry has the user's
-        // AsyncIterable plus an encoder that wraps each value in the
-        // `{ className, data }` envelope the server expects.
+      w.writeln('$decode,');
+      if (inputStreamParams.isNotEmpty) {
         w.writeln('{');
         w.indent(() {
           for (final p in inputStreamParams) {
-            final innerType = p.type.generics.first;
-            final wireClassName = _wireClassName(innerType);
-            final encodeExpr = _streamValueEncodeExpr(innerType);
+            final valueType = p.type.generics.first;
+            final ts = mapper.map(valueType);
             w.writeln(
               "'${p.name}': { iterable: streams.${_safe(p.name)}, "
-              "encode: (v) => ({ className: '$wireClassName', "
-              'data: $encodeExpr }) },',
+              'encode: (v: ${ts.tsType}) => '
+              "r.classNamed('${_wireClassName(valueType)}', ${ts.toJsonExpr('v')}) }"
+              ' as r.InputStreamSpec,',
             );
           }
         });
         w.writeln('},');
       }
     });
-    w.writeln(') as unknown as AsyncIterable<$inner>;');
+    w.writeln(returnsStream ? ');' : '));');
   }
 
-  /// Returns the wire-form `className` we tag input-stream values with.
-  /// For project models/exceptions the IR carries the bare className;
-  /// for primitives we use the Dart type name directly.
-  String _wireClassName(TypeDefinition type) => type.className;
-
-  /// Builds a TS expression that encodes a single input-stream value
-  /// `v` to the `data` field of the wire envelope.
-  String _streamValueEncodeExpr(TypeDefinition innerType) {
-    // Reuse the type mapper's toJson expression. For primitives this is
-    // just `v`; for models it's `v.toJson()`; for collections it walks.
-    final ref = mapper.map(innerType);
-    final expr = ref.toJsonExpr('v');
-    // The data field expects Record<string,unknown>; primitives need
-    // wrapping. The simplest contract: always wrap in `{ value: <expr> }`
-    // for primitives so the server can recognise it. But Serverpod's own
-    // wire format for primitives is implementation-private; for v0.1.1
-    // we send the raw value and trust the runtime cast — known caveat,
-    // documented in the README streaming section.
-    if (_isPrimitive(innerType)) return '{ value: $expr } as Record<string, unknown>';
-    return '$expr as Record<string, unknown>';
-  }
-
-  bool _isPrimitive(TypeDefinition type) {
-    const primitives = {
-      'int', 'double', 'num', 'String', 'bool',
-      'DateTime', 'Duration', 'BigInt', 'UuidValue', 'Uri',
-      'ByteData', 'Uint8List',
-    };
-    return primitives.contains(type.className);
+  /// The class name the server decodes a stream value by — the spelling
+  /// Serverpod's generator registers: generics without spaces, a `?` for a
+  /// nullable type argument, `<module>.` in front of another module's type.
+  /// A model's own `__className__` replaces it at runtime.
+  String _wireClassName(TypeDefinition type, {bool nested = false}) {
+    final url = type.url;
+    var prefix = '';
+    if (mapper.enumClassNames.contains(type.className)) {
+      prefix = classNamePrefix;
+    }
+    for (final module in modules) {
+      if (url != null && url.startsWith('package:${module.serverPackage}/')) {
+        prefix = '${module.name}.';
+      }
+    }
+    final generics = type.generics.isEmpty
+        ? ''
+        : '<${type.generics.map((g) => _wireClassName(g, nested: true)).join(',')}>';
+    return '$prefix${type.className}$generics'
+        '${nested && type.nullable ? '?' : ''}';
   }
 
   _Signature _buildSignature(
@@ -323,29 +320,37 @@ class EndpointEmitter {
   /// are spread guarded so omitting the arg sends nothing instead of
   /// an explicit null. Input-stream parameters are skipped — they're
   /// passed through the `streams` object instead.
+  /// The call's arguments, each encoded by its declared type. The runtime
+  /// cannot do this from the value alone: an enum sent by index and a
+  /// `Duration` are both plain values in TypeScript.
   String _argsObjectExpression(
     MethodDefinition method, {
     required Set<String> excludingNames,
   }) {
+    String encoded(ParameterDefinition p, String access) =>
+        mapper.map(p.type).toJsonExpr(access);
+
     final entries = <String>[];
     for (final p in method.parameters) {
       if (excludingNames.contains(p.name)) continue;
-      entries.add("'${p.name}': ${_safe(p.name)}");
+      entries.add("'${p.name}': ${encoded(p, _safe(p.name))}");
     }
     for (final p in method.parametersPositional) {
       if (excludingNames.contains(p.name)) continue;
+      final access = _safe(p.name);
       entries.add(
-        "...(${_safe(p.name)} !== undefined && { '${p.name}': ${_safe(p.name)} })",
+        "...($access !== undefined && { '${p.name}': ${encoded(p, access)} })",
       );
     }
     for (final p in method.parametersNamed) {
       if (excludingNames.contains(p.name)) continue;
-      final access = 'named?.${_safe(p.name)}';
       if (p.required) {
-        entries.add("'${p.name}': named.${_safe(p.name)}");
+        entries.add("'${p.name}': ${encoded(p, 'named.${_safe(p.name)}')}");
       } else {
+        // Bound to a local so the encoder sees the narrowed, defined value.
+        final access = 'named?.${_safe(p.name)}';
         entries.add(
-          "...($access !== undefined && { '${p.name}': $access })",
+          "...($access !== undefined && { '${p.name}': ${encoded(p, 'named.${_safe(p.name)}')} })",
         );
       }
     }

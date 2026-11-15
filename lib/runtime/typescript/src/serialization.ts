@@ -72,8 +72,16 @@ export function decodeBool(json: unknown): boolean {
 
 // ---------- ByteData (base64) ----------
 
+const BYTES_PREFIX = "decode('";
+const BYTES_SUFFIX = "', 'base64')";
+
+/**
+ * Serverpod writes binary data as the SQL-flavoured literal
+ * `decode('<base64>', 'base64')`, not as bare base64, and refuses a
+ * string in any other form.
+ */
 export function encodeBytes(value: Uint8Array): string {
-  return base64Encode(value);
+  return BYTES_PREFIX + base64Encode(value) + BYTES_SUFFIX;
 }
 
 export function decodeBytes(json: unknown): Uint8Array {
@@ -82,7 +90,10 @@ export function decodeBytes(json: unknown): Uint8Array {
       `Cannot decode ByteData from ${typeof json}: ${JSON.stringify(json)}`,
     );
   }
-  return base64Decode(json);
+  const wrapped = json.startsWith(BYTES_PREFIX) && json.endsWith(BYTES_SUFFIX);
+  return base64Decode(
+    wrapped ? json.slice(BYTES_PREFIX.length, -BYTES_SUFFIX.length) : json,
+  );
 }
 
 function base64Encode(bytes: Uint8Array): string {
@@ -302,5 +313,125 @@ export abstract class SerializationManager {
       return out;
     }
     return value;
+  }
+}
+
+// ---------- Vectors ----------
+
+/**
+ * Encodes a `Vector` or `HalfVector` in pgvector's text form, every
+ * component with a decimal point.
+ *
+ * Not as a JSON array: JSON has one number type, so `[1, 2.5]` reaches
+ * Dart as an `int` and a `double`, and Serverpod's vector decoder casts
+ * each element to `double` without converting — a whole number fails the
+ * request. The text form is parsed by the same decoder, and `1.0` in it is
+ * a `double`.
+ */
+export function encodeVector(values: readonly number[]): string {
+  const components = values.map((v) =>
+    Number.isInteger(v) ? v.toFixed(1) : String(v),
+  );
+  return `[${components.join(',')}]`;
+}
+
+/** A `Vector` or `HalfVector`: a list of numbers, or its pgvector text form. */
+export function decodeVector(json: unknown): number[] {
+  const list = typeof json === 'string' ? (JSON.parse(json) as unknown) : json;
+  if (!Array.isArray(list)) {
+    throw new TypeError(`Cannot decode a vector from ${typeof json}`);
+  }
+  return list.map(Number);
+}
+
+// ---------- UUIDs ----------
+
+function formatUuid(bytes: Uint8Array): string {
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return (
+    hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) +
+    '-' + hex.slice(16, 20) + '-' + hex.slice(20)
+  );
+}
+
+/**
+ * A random (version 4) UUID. Built on `getRandomValues` because
+ * `crypto.randomUUID` exists only in secure contexts, and a development
+ * server on plain `http://<lan-ip>` is not one.
+ */
+export function randomUuidV4(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  return formatUuid(bytes);
+}
+
+/** A time-ordered (version 7) UUID: 48 bits of Unix milliseconds, then random. */
+export function randomUuidV7(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let ms = Date.now();
+  for (let i = 5; i >= 0; i--) {
+    bytes[i] = ms % 256;
+    ms = Math.floor(ms / 256);
+  }
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  return formatUuid(bytes);
+}
+
+// ---------- Model registry ----------
+
+type ModelDecoder = (json: Record<string, unknown>) => unknown;
+
+/** A wire class name without its `<module>.` prefix. */
+export function bareClassName(wireName: string): string {
+  const dot = wireName.lastIndexOf('.');
+  return dot === -1 ? wireName : wireName.slice(dot + 1);
+}
+
+/**
+ * The decoders of one generated package, keyed by class name.
+ *
+ * Generated model files register themselves here and decode each other
+ * through it, so no model file imports another's runtime value. That is
+ * what keeps a sealed base and its subclasses, or two models that hold
+ * each other, from forming an import cycle the module loader cannot
+ * order.
+ */
+export class ModelRegistry {
+  private readonly decoders = new Map<string, ModelDecoder>();
+
+  register(className: string, decode: ModelDecoder): void {
+    this.decoders.set(className, decode);
+  }
+
+  /**
+   * Decodes [json] as the class its `__className__` names when this
+   * package has that class, and as [declared] otherwise — so a subclass
+   * arriving where its parent is declared stays the subclass, and an
+   * object from a server newer than this client still decodes as the
+   * type the call asked for.
+   */
+  decode<T>(declared: string, json: unknown): T {
+    if (json === null || typeof json !== 'object' || Array.isArray(json)) {
+      throw new TypeError(
+        `Cannot decode ${declared} from ${json === null ? 'null' : typeof json}`,
+      );
+    }
+    const obj = json as Record<string, unknown>;
+    const wireName = obj['__className__'];
+    const named =
+      typeof wireName === 'string'
+        ? this.decoders.get(bareClassName(wireName))
+        : undefined;
+    const decode = named ?? this.decoders.get(declared);
+    if (decode === undefined) {
+      throw new TypeError(
+        typeof wireName === 'string'
+          ? `Cannot decode ${declared}: unknown class "${wireName}"`
+          : `Cannot decode ${declared}: the object carries no __className__`,
+      );
+    }
+    return decode(obj) as T;
   }
 }

@@ -56,7 +56,7 @@ export abstract class ServerpodClientShared implements EndpointCaller {
     args: Record<string, unknown>,
     decode: (raw: unknown) => T,
     inputStreams?: Record<string, InputStreamSpec>,
-  ): Promise<AsyncIterable<T>> {
+  ): AsyncIterable<T> {
     return this._caller.callStreamingServerEndpoint(
       endpoint,
       method,

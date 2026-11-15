@@ -1,3 +1,79 @@
+## 0.3.0
+
+Targets Serverpod 4 (`serverpod_cli` / `serverpod_shared` `^4.1.2`, Dart
+`^3.12.2`). A Serverpod 3.x server needs 0.2.4: the streaming protocol
+changed in 4.0.
+
+The generated client is now run, not just type-checked. A new test boots
+the fixture Serverpod server and drives every endpoint from Node through
+the generated code (`test/live_roundtrip_test.dart`, 78 checks). Running it
+for the first time found the defects below; all predate Serverpod 4 except
+the streaming protocol.
+
+Fixed — generated code:
+
+- A project with a sealed class that has two or more subclasses produced a
+  package that threw `Cannot access '<Name>Base' before initialization` on
+  import: the sealed base imported its subclasses and each subclass
+  imported the base. Model files now decode each other through a
+  per-package registry and import one another as types only, so they
+  cannot form an import cycle.
+- A subclass was emitted with its own fields only. `AdminProfile extends
+  UserProfile` lost every `UserProfile` field, on the way in and on the way
+  out. `extends` is now real class inheritance, for sealed and non-sealed
+  parents alike.
+- A subclass returned where its parent is declared was decoded as the
+  parent. Decoding now follows the `__className__` on the wire, as the Dart
+  client does.
+- Arguments were encoded by inspecting the value at runtime, so an enum
+  serialized by index was sent as its name. Arguments are now encoded by
+  their declared type.
+- Module packages wrote a bare `__className__`; they now write
+  `<package>.<Class>`, the form Serverpod's own generator writes.
+
+Fixed — runtime:
+
+- `ByteData` was sent as bare base64. Serverpod expects
+  `decode('<base64>', 'base64')` and answered 400.
+- Streaming methods returned a `Promise` typed as an `AsyncIterable`, so
+  `for await` over one failed. They return an iterable that opens on first
+  use.
+- Stream values were unwrapped incorrectly in both directions: outgoing
+  primitives were sent as `{ value }`, incoming values were decoded from
+  the `{className, data}` pair instead of its `data`.
+- A streaming method with input streams and a `Future` return is now a
+  `Promise` of that value rather than an iterable.
+
+Changed for Serverpod 4:
+
+- The WebSocket transport is rewritten to the Serverpod 4 method-stream
+  protocol: abbreviated frame keys, UUID connection ids, a close reason on
+  every close, credentials in the open command rather than the URL, a ping
+  handshake, keep-alive pings with an idle timeout, one retry after
+  `authenticationFailed` when the auth provider can refresh, and the socket
+  closed when the last stream ends.
+- `ProtocolLoader` follows `GeneratorConfig`'s new shape.
+
+Added:
+
+- Field defaults (`default=` / `defaultModel=`): the field is omittable on
+  the constructor and falls back to the value the Dart client uses.
+- Exceptions that extend other exceptions.
+- `Vector`, `HalfVector`, `SparseVector`, `Bit` and the `Geography*` types.
+  Vectors are sent in pgvector text form with a decimal point on every
+  component: Serverpod's decoder rejects a whole number that arrives as a
+  JSON integer.
+- `generate` warns about each type it cannot express (records, `dynamic`)
+  instead of emitting `unknown` silently.
+
+Breaking for consumers of 0.2.x output:
+
+- A subclass constructor takes its inherited fields too.
+- `Client#callStreamingServerEndpoint` returns `AsyncIterable<T>`, not
+  `Promise<AsyncIterable<T>>`.
+- `ws_messages.ts` exports the Serverpod 4 frame builders; `buildEnvelope`
+  and the long-named frame types are gone.
+
 ## 0.2.4
 
 - Ergonomics: nullable model and exception fields are now OMITTABLE on

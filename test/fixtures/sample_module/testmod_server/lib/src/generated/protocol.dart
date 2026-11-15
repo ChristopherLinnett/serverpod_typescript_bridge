@@ -8,29 +8,54 @@
 // ignore_for_file: type_literal_in_constant_pattern
 // ignore_for_file: use_super_parameters
 // ignore_for_file: invalid_use_of_internal_member
+// ignore_for_file: dead_code, unnecessary_type_check
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'package:serverpod/serverpod.dart' as _i1;
-import 'package:serverpod/protocol.dart' as _i2;
-import 'module_class.dart' as _i3;
+import 'package:serverpod/protocol.dart' as _isp;
+import 'package:serverpod/serverpod.dart' as _is;
+import 'module_class.dart' as _izah8b1s;
 export 'module_class.dart';
 
-class Protocol extends _i1.SerializationManagerServer {
+class Protocol extends _is.DatabaseSerializationManager
+    implements _is.DatabaseProtocolDeserializationProvider {
   Protocol._();
 
   factory Protocol() => _instance;
 
   static final Protocol _instance = Protocol._();
 
-  static final List<_i2.TableDefinition> targetTableDefinitions = [];
+  final Set<_is.SerializationManager> _hostProtocols = {};
 
-  static String? getClassNameFromObjectJson(dynamic data) {
-    if (data is! Map) return null;
-    final className = data['__className__'] as String?;
-    if (className == null) return null;
-    if (!className.startsWith('testmod.')) return className;
-    return className.substring(8);
+  @override
+  _is.ProtocolDeserialization get deserializationMetadata =>
+      _is.ProtocolDeserialization.cached(
+        this,
+        types: const [
+          _is.getType<_izah8b1s.ModuleClass>,
+          _is.getType<_izah8b1s.ModuleClass?>,
+        ],
+        modules: const [_isp.Protocol.new],
+        classNames: const ['ModuleClass'],
+        classNamePrefix: 'testmod.',
+      );
+
+  static List<_isp.TableDefinition> get targetTableDefinitions =>
+      _ownTableDefinitions;
+
+  static List<_isp.TableDefinition> get _ownTableDefinitions => [];
+
+  void registerHostProtocol(
+    String projectName,
+    _is.SerializationManager protocol,
+  ) {
+    _hostProtocols.add(protocol);
   }
+
+  static String? getClassNameFromObjectJson(dynamic data) =>
+      _is.ProtocolDeserialization.normalizeClassName(
+        _is.ProtocolDeserialization.readClassName(data),
+        prefix: 'testmod.',
+      );
 
   @override
   T deserialize<T>(
@@ -38,36 +63,46 @@ class Protocol extends _i1.SerializationManagerServer {
     Type? t,
   ]) {
     t ??= T;
-
-    final dataClassName = getClassNameFromObjectJson(data);
+    final rawDataClassName = _is.ProtocolDeserialization.readClassName(data);
+    final dataClassName = _is.ProtocolDeserialization.normalizeClassName(
+      rawDataClassName,
+      prefix: 'testmod.',
+    );
     if (dataClassName != null && dataClassName != getClassNameForType(t)) {
       try {
         return deserializeByClassName({
           'className': dataClassName,
           'data': data,
         });
-      } on FormatException catch (_) {
+      } on _is.DeserializationClassNameNotFoundException catch (_) {
         // If the className is not recognized (e.g., older client receiving
         // data with a new subtype), fall back to deserializing without the
         // className, using the expected type T.
       }
     }
 
-    if (t == _i3.ModuleClass) {
-      return _i3.ModuleClass.fromJson(data) as T;
+    if (t == _izah8b1s.ModuleClass) {
+      return _izah8b1s.ModuleClass.fromJson(data) as T;
     }
-    if (t == _i1.getType<_i3.ModuleClass?>()) {
-      return (data != null ? _i3.ModuleClass.fromJson(data) : null) as T;
+    if (t == _is.getType<_izah8b1s.ModuleClass?>()) {
+      return (data != null ? _izah8b1s.ModuleClass.fromJson(data) : null) as T;
     }
-    try {
-      return _i2.Protocol().deserialize<T>(data, t);
-    } on _i1.DeserializationTypeNotFoundException catch (_) {}
+    final modules = deserializationMetadata.modulesForDeserialization(
+      t,
+      className: rawDataClassName,
+    );
+    for (final module in modules) {
+      try {
+        return module.deserialize<T>(data, t);
+      } on _is.DeserializationTypeNotFoundException catch (_) {}
+    }
+
     return super.deserialize<T>(data, t);
   }
 
   static String? getClassNameForType(Type type) {
     return switch (type) {
-      _i3.ModuleClass => 'ModuleClass',
+      _izah8b1s.ModuleClass => 'ModuleClass',
       _ => null,
     };
   }
@@ -82,12 +117,12 @@ class Protocol extends _i1.SerializationManagerServer {
     }
 
     switch (data) {
-      case _i3.ModuleClass():
+      case _izah8b1s.ModuleClass():
         return 'ModuleClass';
     }
-    className = _i2.Protocol().getClassNameForObject(data);
+    className = _isp.Protocol().getClassNameForObject(data);
     if (className != null) {
-      return 'serverpod.$className';
+      return className.contains('.') ? className : 'serverpod.$className';
     }
     return null;
   }
@@ -99,19 +134,80 @@ class Protocol extends _i1.SerializationManagerServer {
       return super.deserializeByClassName(data);
     }
     if (dataClassName == 'ModuleClass') {
-      return deserialize<_i3.ModuleClass>(data['data']);
+      return deserialize<_izah8b1s.ModuleClass>(data['data']);
     }
     if (dataClassName.startsWith('serverpod.')) {
-      data['className'] = dataClassName.substring(10);
-      return _i2.Protocol().deserializeByClassName(data);
+      return _isp.Protocol().deserializeByClassName({
+        ...data,
+        'className': dataClassName.substring(10),
+      });
     }
     return super.deserializeByClassName(data);
   }
 
   @override
-  _i1.Table? getTableForType(Type t) {
+  Object? dynamicFieldToJson(
+    Object? object, {
+    bool forProtocol = false,
+  }) {
+    if ((object is List || object is Set || object is Map) ||
+        getClassNameForObject(object) != null) {
+      return super.dynamicFieldToJson(object, forProtocol: forProtocol);
+    }
+    for (final protocol in _hostProtocols) {
+      final className = protocol.getClassNameForObject(object);
+      if (className == null) continue;
+      final host = protocol.getModuleName();
+      final wrapped = {
+        'className': className.contains('.') ? className : '$host.$className',
+        'data': object,
+      };
+      return forProtocol
+          ? _is.SerializationManager.toEncodableForProtocol(wrapped)
+          : _is.SerializationManager.toEncodable(wrapped);
+    }
+    return super.dynamicFieldToJson(object, forProtocol: forProtocol);
+  }
+
+  @override
+  dynamic deserializeDynamicFieldValue(Object? value) {
+    if (value == null) return null;
+    if (value is! Map<String, dynamic> || value['className'] is! String) {
+      throw FormatException(
+        'Dynamic fields are encoded as a Map with className and data, but got '
+        '${value.runtimeType} instead.',
+      );
+    }
+    final className = value['className'] as String;
+    for (final protocol in _hostProtocols) {
+      final host = protocol.getModuleName();
+      final hostPrefix = '$host.';
+      if (className.startsWith(hostPrefix)) {
+        final strippedClassName = className.substring(hostPrefix.length);
+        if (strippedClassName.contains('.')) {
+          throw FormatException(
+            'Dynamic field className must not use multiple prefixes: $className',
+          );
+        }
+        final hostData = Map<String, dynamic>.from(value);
+        hostData['className'] = strippedClassName;
+        return protocol.deserializeByClassName(hostData);
+      }
+    }
+    if (className.contains('.')) {
+      for (final protocol in _hostProtocols) {
+        try {
+          return protocol.deserializeByClassName(value);
+        } on _is.DeserializationClassNameNotFoundException catch (_) {}
+      }
+    }
+    return deserializeByClassName(value);
+  }
+
+  @override
+  _is.Table? getTableForType(Type t) {
     {
-      var table = _i2.Protocol().getTableForType(t);
+      var table = _isp.Protocol().getTableForType(t);
       if (table != null) {
         return table;
       }
@@ -120,8 +216,11 @@ class Protocol extends _i1.SerializationManagerServer {
   }
 
   @override
-  List<_i2.TableDefinition> getTargetTableDefinitions() =>
+  List<_isp.TableDefinition> getTargetTableDefinitions() =>
       targetTableDefinitions;
+
+  @override
+  List<_isp.TableDefinition> getOwnTableDefinitions() => _ownTableDefinitions;
 
   @override
   String getModuleName() => 'testmod';
@@ -136,7 +235,7 @@ class Protocol extends _i1.SerializationManagerServer {
       return null;
     }
     try {
-      return _i2.Protocol().mapRecordToJson(record);
+      return _isp.Protocol().mapRecordToJson(record);
     } catch (_) {}
     throw Exception('Unsupported record type ${record.runtimeType}');
   }

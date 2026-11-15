@@ -10,14 +10,17 @@
 // ignore_for_file: invalid_use_of_internal_member
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'package:serverpod_client/serverpod_client.dart' as _i1;
+import 'package:serverpod_client/serverpod_client.dart' as _isc;
 
 /// Thrown when a requested resource cannot be located.
 ///
 /// Round-trips as a typed `SerializableException` over the wire. Exercises the
 /// typed-exception decoding path in the runtime.
 abstract class NotFoundException
-    implements _i1.SerializableException, _i1.SerializableModel {
+    implements
+        _isc.SerializableException,
+        _isc.SerializableModel,
+        _isc.ProtocolSerialization {
   NotFoundException._({
     required this.resourceId,
     required this.message,
@@ -43,13 +46,22 @@ abstract class NotFoundException
 
   /// Returns a shallow copy of this [NotFoundException]
   /// with some or all fields replaced by the given arguments.
-  @_i1.useResult
+  @_isc.useResult
   NotFoundException copyWith({
     String? resourceId,
     String? message,
   });
   @override
   Map<String, dynamic> toJson() {
+    return {
+      '__className__': 'NotFoundException',
+      'resourceId': resourceId,
+      'message': message,
+    };
+  }
+
+  @override
+  Map<String, dynamic> toJsonForProtocol() {
     return {
       '__className__': 'NotFoundException',
       'resourceId': resourceId,
@@ -74,7 +86,7 @@ class _NotFoundExceptionImpl extends NotFoundException {
 
   /// Returns a shallow copy of this [NotFoundException]
   /// with some or all fields replaced by the given arguments.
-  @_i1.useResult
+  @_isc.useResult
   @override
   NotFoundException copyWith({
     String? resourceId,

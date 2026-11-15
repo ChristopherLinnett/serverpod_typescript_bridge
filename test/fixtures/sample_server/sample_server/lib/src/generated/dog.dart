@@ -12,8 +12,8 @@
 part of 'animal.dart';
 
 /// A dog. Concrete subclass of the sealed [Animal].
-abstract class Dog extends _i1.Animal
-    implements _i2.SerializableModel, _i2.ProtocolSerialization {
+abstract class Dog extends _il2as5qe.Animal
+    implements _is.SerializableModel, _is.ProtocolSerialization {
   Dog._({
     required super.name,
     required this.breed,
@@ -30,7 +30,7 @@ abstract class Dog extends _i1.Animal
     return Dog(
       name: jsonSerialization['name'] as String,
       breed: jsonSerialization['breed'] as String,
-      goodWithKids: _i2.BoolJsonExtension.fromJson(
+      goodWithKids: _is.BoolJsonExtension.fromJson(
         jsonSerialization['goodWithKids'],
       ),
     );
@@ -45,7 +45,7 @@ abstract class Dog extends _i1.Animal
   /// Returns a shallow copy of this [Dog]
   /// with some or all fields replaced by the given arguments.
   @override
-  @_i2.useResult
+  @_is.useResult
   Dog copyWith({
     String? name,
     String? breed,
@@ -73,7 +73,7 @@ abstract class Dog extends _i1.Animal
 
   @override
   String toString() {
-    return _i2.SerializationManager.encode(this);
+    return _is.SerializationManager.encode(this);
   }
 }
 
@@ -90,7 +90,7 @@ class _DogImpl extends Dog {
 
   /// Returns a shallow copy of this [Dog]
   /// with some or all fields replaced by the given arguments.
-  @_i2.useResult
+  @_is.useResult
   @override
   Dog copyWith({
     String? name,

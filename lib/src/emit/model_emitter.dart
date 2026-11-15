@@ -3,6 +3,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:serverpod_cli/analyzer.dart';
+import 'package:serverpod_cli/src/generator/types.dart'
+    show DefaultValueAllowedType;
+import 'package:serverpod_shared/serverpod_shared.dart' show parseDuration;
 
 import 'generated_file_tracker.dart';
 import 'module_import_lines.dart';
@@ -21,11 +24,22 @@ class ModelEmitter {
     required this.outputDir,
     required this.tracker,
     required this.mapper,
+    this.classNamePrefix = '',
   });
 
   final Directory outputDir;
   final GeneratedFileTracker tracker;
   final TsTypeMapper mapper;
+
+  /// Prepended to every `__className__` this package writes: `<nickname>.`
+  /// for a module, empty for an app — the same form Serverpod's Dart client
+  /// puts on the wire.
+  final String classNamePrefix;
+
+  static const _registryStem = '_registry';
+
+  /// The registry's filename under `src/protocol/`.
+  static const registryFilename = '$_registryStem.ts';
 
   late final ModuleImportLines _moduleImports =
       ModuleImportLines(mapper.moduleIndex);
@@ -42,87 +56,61 @@ class ModelEmitter {
     }
   }
 
-  /// Class names emitted as TS enums. Used for cross-file imports —
-  /// enum imports also need to bring in `<Name>Codec`.
-  Set<String> get _enumClassNames => mapper.enumClassNames;
-
-  /// Class names emitted as sealed bases. Cross-file imports must also
-  /// bring in `<Name>Base` (the dispatcher) when a field references the
-  /// sealed type.
-  Set<String> get _sealedClassNames => mapper.sealedClassNames;
-
   /// Every class name in the project — sealed bases, plain classes,
   /// exceptions, and enums. Populated by [emitAll] before any per-file
   /// emission so cross-file imports can be resolved.
   late Set<String> _allClassNames;
+  late Set<String> _enumNames;
 
-  /// Emits every model in [models], plus a `protocol/index.ts` barrel
-  /// re-exporting them all. Sealed bases get an extra discriminated-union
-  /// type alias and a static `fromJson` that dispatches on `__className__`.
-  /// Returns the list of emitted filenames (with the `.ts` suffix),
-  /// in alphabetical order — the barrel writer strips `.ts`.
+  /// Emits one `.ts` file per model, the registry they decode through, and
+  /// the barrel. Returns the model filenames, sorted.
   List<String> emitAll(List<SerializableModelDefinition> models) {
     _allClassNames = {for (final m in models) m.className};
-
-    final modelClasses = models.whereType<ModelClassDefinition>().toList();
-    final classByName = {for (final m in modelClasses) m.className: m};
-    final subclassesBySealedAncestor =
-        <String, List<ModelClassDefinition>>{};
-    for (final m in modelClasses) {
-      if (m.isSealed) continue;
-      for (final ancestor in _sealedAncestorChain(m, classByName)) {
-        subclassesBySealedAncestor
-            .putIfAbsent(ancestor, () => [])
-            .add(m);
-      }
-    }
-    for (final list in subclassesBySealedAncestor.values) {
-      list.sort((a, b) => a.className.compareTo(b.className));
-    }
+    _enumNames = {
+      for (final m in models.whereType<EnumDefinition>()) m.className,
+    };
 
     final emitted = <String>[];
     for (final model in models) {
-      if (model is ModelClassDefinition) {
-        if (model.isSealed) {
-          emitted.add(_emitSealedBase(
-            model,
-            subclassesBySealedAncestor[model.className] ?? const [],
-          ));
-        } else {
-          emitted.add(_emitClass(
-            model,
-            sealedAncestor: _nearestSealedAncestorName(model, classByName),
-          ));
-        }
-      } else if (model is ExceptionClassDefinition) {
-        emitted.add(_emitException(model));
+      if (model is ClassDefinition) {
+        emitted.add(_emitClass(model));
       } else if (model is EnumDefinition) {
         emitted.add(_emitEnum(model));
       }
     }
     emitted.sort();
+    _emitRegistry();
     _emitProtocolBarrel(emitted);
     return emitted;
   }
 
-  /// Walks up from [model], yielding every sealed ancestor (not including
-  /// `model` itself) in order from nearest to outermost.
-  Iterable<String> _sealedAncestorChain(
-    ModelClassDefinition model,
-    Map<String, ModelClassDefinition> byName,
-  ) sync* {
-    ModelClassDefinition? cursor = byName[model.parentClass?.className];
-    while (cursor != null) {
-      if (cursor.isSealed) yield cursor.className;
-      cursor = byName[cursor.parentClass?.className];
-    }
+  /// Concrete (non-sealed) descendants of a sealed class, by name — the
+  /// members of its TypeScript union.
+  List<ClassDefinition> _concreteDescendants(ClassDefinition sealed) {
+    final out = sealed.descendantClasses.where((c) => !c.isSealed).toList()
+      ..sort((a, b) => a.className.compareTo(b.className));
+    return out;
   }
 
-  String? _nearestSealedAncestorName(
-    ModelClassDefinition model,
-    Map<String, ModelClassDefinition> byName,
-  ) {
-    return _sealedAncestorChain(model, byName).firstOrNull;
+  /// The registry is a leaf module: it imports only the runtime, so a model
+  /// file can decode a sibling through it without importing the sibling.
+  /// Two model files that import each other's classes cannot both be
+  /// evaluated first, and a subclass needs its parent evaluated before it —
+  /// which is how a sealed base that imported its own subclasses made the
+  /// whole package fail on import.
+  void _emitRegistry() {
+    final w = TsWriter()
+      ..writeRaw(_generatedHeader)
+      ..writeln("import * as r from '../runtime/index.js';")
+      ..blankLine()
+      ..writeln('/**')
+      ..writeln(
+        ' * Decoders for every model in this package, keyed by wire class name.',
+      )
+      ..writeln(' * Each model file registers itself when it loads.')
+      ..writeln(' */')
+      ..writeln('export const models = new r.ModelRegistry();');
+    _writeFile(registryFilename, w.toString());
   }
 
   void _emitProtocolBarrel(List<String> filenames) {
@@ -157,348 +145,378 @@ class ModelEmitter {
     }
   }
 
-  /// Builds the cross-file import lines for [ownClassName], based on
-  /// the project types referenced in [fields] (plus an optional
-  /// extra symbol like a sealed ancestor we always need to import).
+  /// Import lines for the sibling types [fields] mention.
   ///
-  /// Each emitted line covers ONE other file in `protocol/` and
-  /// brings in every required symbol from it (`Name`, `NameBase`,
-  /// `NameCodec`) so a single file's worth of references collapses
-  /// to one import statement.
+  /// Classes are imported as TYPES only: decoding goes through the registry,
+  /// so no model file needs another's runtime value, and none can form an
+  /// evaluation cycle. Enums are the exception — their codec is a runtime
+  /// value — and they are safe because an enum file imports nothing.
   List<String> _buildImportLines({
     required String ownClassName,
     required List<SerializableModelFieldDefinition> fields,
-    String? extraImport,
+    String? parentClassName,
   }) {
     final referenced = <String>{};
     for (final f in fields) {
       _collectReferencedProjectTypes(f.type, referenced);
     }
-    if (extraImport != null) referenced.add(extraImport);
-    referenced.remove(ownClassName); // never self-import
+    referenced
+      ..remove(ownClassName)
+      ..remove(parentClassName);
 
     final sorted = referenced.toList()..sort();
     return [
       for (final ref in sorted)
-        "import { ${_importSymbols(ref).join(', ')} } from './${_filenameStemOf(ref)}.js';",
+        if (_enumNames.contains(ref))
+          "import { $ref, ${ref}Codec } from './${_filenameStemOf(ref)}.js';"
+        else
+          "import type { $ref } from './${_filenameStemOf(ref)}.js';",
     ];
   }
 
-  /// Symbols we need to bring in from the file that defines [className].
-  /// Mirrors what `TsTypeMapper` emits at the use site:
-  ///   plain class       → just `Name`
-  ///   exception         → just `Name`
-  ///   sealed base       → `Name` (the union alias) + `NameBase` (dispatcher)
-  ///   enum              → `Name` + `NameCodec`
-  List<String> _importSymbols(String className) {
-    if (_enumClassNames.contains(className)) {
-      return [className, '${className}Codec'];
-    }
-    if (_sealedClassNames.contains(className)) {
-      return [className, '${className}Base'];
-    }
-    return [className];
-  }
+  /// The TypeScript class a Dart class is emitted as. A sealed class is an
+  /// abstract `<Name>Base`; its bare name is the union of its concrete
+  /// descendants, which is what lets a `switch` over them be exhaustive.
+  String _tsClassNameOf(ClassDefinition model) =>
+      model.isSealed ? '${model.className}Base' : model.className;
 
-  String _emitSealedBase(
-    ModelClassDefinition model,
-    List<ModelClassDefinition> subclasses,
-  ) {
+  List<SerializableModelFieldDefinition> _clientFields(
+    Iterable<SerializableModelFieldDefinition> fields,
+  ) =>
+      fields.where((f) => f.shouldIncludeField(false /* serverCode */)).toList();
+
+  /// Emits a model or exception class: its own fields, a constructor taking
+  /// every field including inherited ones, and — unless it is sealed —
+  /// `fromJson` / `toJson` / `copyWith` and its registration.
+  String _emitClass(ClassDefinition model) {
+    final isException = model is ExceptionClassDefinition;
+    final parent = model.parentClass;
+    final ownFields = _clientFields(model.fields);
+    final allFields = _clientFields(model.fieldsIncludingInherited);
+    final tsName = _tsClassNameOf(model);
+    final parentIsLocal =
+        parent != null && _allClassNames.contains(parent.className);
+
     final w = TsWriter()
       ..writeRaw(_generatedHeader)
-      ..writeln("import * as r from '../runtime/index.js';");
-    // Subclass imports are *value* imports — the switch dispatcher
-    // calls `Sub.fromJson(...)` so we need the runtime symbol.
-    for (final sub in subclasses) {
+      ..writeln("import * as r from '../runtime/index.js';")
+      ..writeln("import { models } from './$_registryStem.js';");
+    if (parent != null && parentIsLocal) {
+      // The one value import between model files: `extends` needs the parent
+      // at evaluation time, and a parent never imports a descendant's value.
       w.writeln(
-        "import { ${sub.className} } from './${_filenameStemOf(sub.className)}.js';",
+        "import { ${_tsClassNameOf(parent)} } from './${_filenameStemOf(parent.className)}.js';",
       );
+    }
+    for (final line in _buildImportLines(
+      ownClassName: model.className,
+      fields: allFields,
+      parentClassName: parentIsLocal ? parent.className : null,
+    )) {
+      w.writeln(line);
+    }
+    if (model.isSealed) {
+      for (final member in _concreteDescendants(model)) {
+        w.writeln(
+          "import type { ${member.className} } from './${_filenameStemOf(member.className)}.js';",
+        );
+      }
+    }
+    _writeModuleImports(w, allFields);
+    if (parent != null && !parentIsLocal) {
+      for (final line in _moduleImports.forClassNames([parent.className])) {
+        w.writeln(line);
+      }
     }
     w.blankLine();
 
-    final union = subclasses.isEmpty
-        ? 'never'
-        : subclasses.map((s) => s.className).join(' | ');
-    w.docComment(model.documentation?.join('\n'));
-    w.writeln('export type ${model.className} = $union;');
-    w.blankLine();
+    if (model.isSealed) {
+      final union = _concreteDescendants(model);
+      w.docComment(model.documentation?.join('\n'));
+      w.writeln(
+        'export type ${model.className} = '
+        '${union.isEmpty ? 'never' : union.map((s) => s.className).join(' | ')};',
+      );
+      w.blankLine();
+    } else {
+      w.docComment(model.documentation?.join('\n'));
+    }
 
+    final superClass = parent != null
+        ? _tsClassNameOf(parent)
+        : (isException ? 'Error' : null);
+    final contract =
+        isException ? 'r.SerializableException' : 'r.SerializableModel';
     w.writeln(
-      'export abstract class ${model.className}Base implements r.SerializableModel {',
+      'export ${model.isSealed ? 'abstract ' : ''}class $tsName'
+      '${superClass == null ? '' : ' extends $superClass'}'
+      ' implements $contract {',
     );
     w.indent(() {
-      w.writeln('abstract toJson(): Record<string, unknown>;');
-      w.blankLine();
-      w.writeln(
-        'static fromJson(json: Record<string, unknown>): ${model.className} {',
-      );
-      w.indent(() {
+      for (final field in ownFields) {
+        w.docComment(field.documentation?.join('\n'));
+        final type = mapper.map(field.type);
         w.writeln(
-          "const className = json['__className__'] as string | undefined;",
+          '${isException ? 'readonly ' : ''}${field.name}: ${type.tsType};',
         );
-        w.writeln('switch (className) {');
+      }
+      if (ownFields.isNotEmpty) w.blankLine();
+
+      _writeConstructor(
+        w,
+        model: model,
+        ownFields: ownFields,
+        allFields: allFields,
+        hasParent: parent != null,
+      );
+      w.blankLine();
+
+      if (model.isSealed) {
+        w.writeln('abstract toJson(): Record<string, unknown>;');
+        w.blankLine();
+        // No class of its own to build: the wire's `__className__` names
+        // the concrete descendant.
+        w.writeln(
+          'static fromJson(json: Record<string, unknown>): ${model.className} {',
+        );
         w.indent(() {
-          for (final sub in subclasses) {
-            w.writeln(
-              "case '${sub.className}': return ${sub.className}.fromJson(json);",
-            );
-          }
           w.writeln(
-            "default: throw new Error('Unknown ${model.className} subtype: ' + className);",
+            "return models.decode<${model.className}>('${model.className}', json);",
           );
         });
         w.writeln('}');
-      });
-      w.writeln('}');
+      } else {
+        _writeFromJson(w, model, allFields);
+        w.blankLine();
+        _writeToJson(w, model, allFields);
+        w.blankLine();
+        _writeCopyWith(w, model, allFields);
+      }
     });
     w.writeln('}');
+
+    if (!model.isSealed) {
+      w.blankLine();
+      w.writeln(
+        "models.register('${model.className}', (json) => ${model.className}.fromJson(json));",
+      );
+    }
 
     return _writeFile(_filenameOf(model.className), w.toString());
   }
 
-  String _emitClass(
-    ModelClassDefinition model, {
-    String? sealedAncestor,
+  /// Nullable fields are optional on the `init` bag and default to `null`,
+  /// so callers do not pad every nullable field; the class field itself
+  /// stays `T | null`.
+  void _writeConstructor(
+    TsWriter w, {
+    required ClassDefinition model,
+    required List<SerializableModelFieldDefinition> ownFields,
+    required List<SerializableModelFieldDefinition> allFields,
+    required bool hasParent,
   }) {
-    final fields = model.fields
-        .where((f) => f.shouldIncludeField(false /* serverCode */))
-        .toList();
-
-    final w = TsWriter()
-      ..writeRaw(_generatedHeader)
-      ..writeln("import * as r from '../runtime/index.js';");
-    final imports = _buildImportLines(
-      ownClassName: model.className,
-      fields: fields,
-      extraImport: sealedAncestor,
-    );
-    for (final line in imports) {
-      w.writeln(line);
-    }
-    _writeModuleImports(w, fields);
-    w.blankLine();
-
-    w.docComment(model.documentation?.join('\n'));
-    if (sealedAncestor != null) {
-      w.writeln(
-        'export class ${model.className} extends ${sealedAncestor}Base implements r.SerializableModel {',
-      );
-    } else {
-      w.writeln(
-        'export class ${model.className} implements r.SerializableModel {',
-      );
-    }
-    w.indent(() {
-      for (final field in fields) {
-        w.docComment(field.documentation?.join('\n'));
-        final type = mapper.map(field.type);
-        w.writeln('${field.name}: ${type.tsType};');
+    final isException = model is ExceptionClassDefinition;
+    if (allFields.isEmpty) {
+      if (!hasParent && isException) {
+        w.writeln('constructor() {');
+        w.indent(() {
+          w.writeln("super('${model.className}');");
+          w.writeln("this.name = '${model.className}';");
+        });
+        w.writeln('}');
+      } else {
+        w.writeln('constructor() {');
+        w.indent(() {
+          if (hasParent) w.writeln('super();');
+          if (isException) w.writeln("this.name = '${model.className}';");
+        });
+        w.writeln('}');
       }
-      w.blankLine();
+      return;
+    }
 
-      // Nullable fields are emitted as optional properties on the
-      // constructor's init bag (`name?: T | null`) so callers don't
-      // have to pad with `null` for every nullable field. The body
-      // defaults omitted-or-undefined to `null` so the runtime field
-      // type stays honest at `T | null`. Non-nullable fields stay
-      // required — they have no meaningful default.
-      w.writeln('constructor(init: {');
-      w.indent(() {
-        for (final field in fields) {
-          final type = mapper.map(field.type);
-          final maybe = field.type.nullable ? '?' : '';
-          w.writeln('${field.name}$maybe: ${type.tsType};');
-        }
-      });
-      w.writeln('}) {');
-      w.indent(() {
-        if (sealedAncestor != null) w.writeln('super();');
-        for (final field in fields) {
-          if (field.type.nullable) {
-            w.writeln('this.${field.name} = init.${field.name} ?? null;');
-          } else {
-            w.writeln('this.${field.name} = init.${field.name};');
-          }
-        }
-      });
-      w.writeln('}');
-      w.blankLine();
-
-      w.writeln(
-        'static fromJson(json: Record<string, unknown>): ${model.className} {',
-      );
-      w.indent(() {
-        w.writeln('return new ${model.className}({');
-        w.indent(() {
-          for (final field in fields) {
-            final type = mapper.map(field.type);
-            final fromExpr = type.fromJsonExpr("json['${field.name}']");
-            w.writeln('${field.name}: $fromExpr,');
-          }
-        });
-        w.writeln('});');
-      });
-      w.writeln('}');
-      w.blankLine();
-
-      w.writeln('toJson(): Record<string, unknown> {');
-      w.indent(() {
-        w.writeln('return {');
-        w.indent(() {
-          w.writeln("__className__: '${model.className}',");
-          for (final field in fields) {
-            final type = mapper.map(field.type);
-            if (field.type.nullable) {
-              w.writeln(
-                '...(this.${field.name} !== null && '
-                '{ ${field.name}: ${type.toJsonExpr('this.${field.name}')} }),',
-              );
-            } else {
-              w.writeln(
-                '${field.name}: ${type.toJsonExpr('this.${field.name}')},',
-              );
-            }
-          }
-        });
-        w.writeln('};');
-      });
-      w.writeln('}');
-      w.blankLine();
-
-      w.writeln('copyWith(partial: Partial<{');
-      w.indent(() {
-        for (final field in fields) {
-          final type = mapper.map(field.type);
-          w.writeln('${field.name}: ${type.tsType};');
-        }
-      });
-      w.writeln('}>): ${model.className} {');
-      w.indent(() {
-        w.writeln('return new ${model.className}({');
-        w.indent(() {
-          for (final field in fields) {
-            if (field.type.nullable) {
-              w.writeln(
-                '${field.name}: '
-                "'${field.name}' in partial "
-                '? (partial.${field.name} ?? null) '
-                ': this.${field.name},',
-              );
-            } else {
-              w.writeln(
-                '${field.name}: partial.${field.name} ?? this.${field.name},',
-              );
-            }
-          }
-        });
-        w.writeln('});');
-      });
-      w.writeln('}');
+    w.writeln('constructor(init: {');
+    w.indent(() {
+      for (final field in allFields) {
+        final type = mapper.map(field.type);
+        // `| undefined` on a defaulted field: `fromJson` passes the key
+        // explicitly when the wire has no value for it.
+        final hasDefault = _defaultExpr(field) != null;
+        final optional = field.type.nullable || hasDefault;
+        w.writeln(
+          '${field.name}${optional ? '?' : ''}: ${type.tsType}'
+          '${hasDefault ? ' | undefined' : ''};',
+        );
+      }
+    });
+    w.writeln('}) {');
+    w.indent(() {
+      if (hasParent) {
+        final inherited = allFields.length - ownFields.length;
+        w.writeln(inherited == 0 ? 'super();' : 'super(init);');
+      } else if (isException) {
+        final message = allFields.where(
+          (f) => f.name == 'message' && f.type.className == 'String',
+        );
+        w.writeln(
+          message.isEmpty
+              ? "super('${model.className}');"
+              : message.first.type.nullable
+                  ? "super(init.message ?? '${model.className}');"
+                  : 'super(init.message);',
+        );
+      }
+      // A field called `name` owns that slot; the class name must not
+      // overwrite the value the server sent.
+      if (isException && !allFields.any((f) => f.name == 'name')) {
+        w.writeln("this.name = '${model.className}';");
+      }
+      for (final field in ownFields) {
+        final fallback =
+            _defaultExpr(field) ?? (field.type.nullable ? 'null' : null);
+        w.writeln(
+          fallback == null
+              ? 'this.${field.name} = init.${field.name};'
+              : 'this.${field.name} = init.${field.name} ?? $fallback;',
+        );
+      }
     });
     w.writeln('}');
-
-    return _writeFile(_filenameOf(model.className), w.toString());
   }
 
-  String _emitException(ExceptionClassDefinition model) {
-    final fields = model.fields
-        .where((f) => f.shouldIncludeField(false))
-        .toList();
-
-    final w = TsWriter()
-      ..writeRaw(_generatedHeader)
-      ..writeln("import * as r from '../runtime/index.js';");
-    final imports = _buildImportLines(
-      ownClassName: model.className,
-      fields: fields,
-    );
-    for (final line in imports) {
-      w.writeln(line);
+  /// The TypeScript expression for a field's model default, or `null` when
+  /// it has none. A field with one is optional on the `init` bag, and an
+  /// absent or `null` value on the wire falls back to it — the behaviour of
+  /// the Dart client's generated constructor.
+  String? _defaultExpr(SerializableModelFieldDefinition field) {
+    final value = field.defaultModelValue;
+    if (value == null) return null;
+    final text = '$value';
+    switch (field.type.defaultValueType) {
+      case null:
+        return null;
+      case DefaultValueAllowedType.dateTime:
+        return text == 'now' ? 'new Date()' : "new Date('$text')";
+      case DefaultValueAllowedType.bool:
+        return text == 'true' || text == 'false' ? text : null;
+      case DefaultValueAllowedType.int:
+        return int.tryParse(text)?.toString();
+      case DefaultValueAllowedType.double:
+        return double.tryParse(text)?.toString();
+      // Already a quoted literal in the model file.
+      case DefaultValueAllowedType.string:
+      case DefaultValueAllowedType.uri:
+        return text;
+      case DefaultValueAllowedType.uuidValue:
+        return switch (text) {
+          'random' => 'r.randomUuidV4()',
+          'random_v7' => 'r.randomUuidV7()',
+          _ => text,
+        };
+      case DefaultValueAllowedType.bigInt:
+        return "BigInt('$text')";
+      case DefaultValueAllowedType.duration:
+        return '${parseDuration(text).inMilliseconds}';
+      case DefaultValueAllowedType.isEnum:
+        return '${field.type.className}.${_enumMemberName(text)}';
     }
-    _writeModuleImports(w, fields);
-    w.blankLine();
+  }
 
-    w.docComment(model.documentation?.join('\n'));
+  void _writeFromJson(
+    TsWriter w,
+    ClassDefinition model,
+    List<SerializableModelFieldDefinition> allFields,
+  ) {
     w.writeln(
-      'export class ${model.className} extends Error implements r.SerializableException {',
+      'static fromJson(json: Record<string, unknown>): ${model.className} {',
     );
     w.indent(() {
-      for (final field in fields) {
-        w.docComment(field.documentation?.join('\n'));
-        final type = mapper.map(field.type);
-        w.writeln('readonly ${field.name}: ${type.tsType};');
+      if (allFields.isEmpty) {
+        w.writeln('return new ${model.className}();');
+        return;
       }
-      w.blankLine();
-
-      // Same nullable-fields-are-optional treatment as `_emitClass`:
-      // callers can omit nullable fields and they default to `null`,
-      // so building an exception with only the message+a couple of
-      // populated fields stays one line.
-      w.writeln('constructor(init: {');
+      w.writeln('return new ${model.className}({');
       w.indent(() {
-        for (final field in fields) {
+        for (final field in allFields) {
           final type = mapper.map(field.type);
-          final maybe = field.type.nullable ? '?' : '';
-          w.writeln('${field.name}$maybe: ${type.tsType};');
+          final access = "json['${field.name}']";
+          final decoded = type.fromJsonExpr(access);
+          w.writeln(
+            _defaultExpr(field) == null
+                ? '${field.name}: $decoded,'
+                // `undefined`, so the constructor applies the default.
+                : '${field.name}: $access === undefined || $access === null '
+                    '? undefined : $decoded,',
+          );
         }
       });
-      w.writeln('}) {');
-      w.indent(() {
-        final hasMsg = fields.any((f) => f.name == 'message');
-        if (hasMsg) {
-          w.writeln('super(init.message as string);');
-        } else {
-          w.writeln("super('${model.className}');");
-        }
-        w.writeln("this.name = '${model.className}';");
-        for (final field in fields) {
-          if (field.type.nullable) {
-            w.writeln('this.${field.name} = init.${field.name} ?? null;');
-          } else {
-            w.writeln('this.${field.name} = init.${field.name};');
-          }
-        }
-      });
-      w.writeln('}');
-      w.blankLine();
-
-      w.writeln(
-        'static fromJson(json: Record<string, unknown>): ${model.className} {',
-      );
-      w.indent(() {
-        w.writeln('return new ${model.className}({');
-        w.indent(() {
-          for (final field in fields) {
-            final type = mapper.map(field.type);
-            w.writeln(
-              '${field.name}: ${type.fromJsonExpr("json['${field.name}']")},',
-            );
-          }
-        });
-        w.writeln('});');
-      });
-      w.writeln('}');
-      w.blankLine();
-
-      w.writeln('toJson(): Record<string, unknown> {');
-      w.indent(() {
-        w.writeln('return {');
-        w.indent(() {
-          w.writeln("__className__: '${model.className}',");
-          for (final field in fields) {
-            final type = mapper.map(field.type);
-            w.writeln(
-              '${field.name}: ${type.toJsonExpr('this.${field.name}')},',
-            );
-          }
-        });
-        w.writeln('};');
-      });
-      w.writeln('}');
+      w.writeln('});');
     });
     w.writeln('}');
+  }
 
-    return _writeFile(_filenameOf(model.className), w.toString());
+  /// Mirrors Dart's `toJsonForProtocol`: `__className__` first, with this
+  /// package's module prefix, and a `null` field left out rather than sent.
+  void _writeToJson(
+    TsWriter w,
+    ClassDefinition model,
+    List<SerializableModelFieldDefinition> allFields,
+  ) {
+    w.writeln('toJson(): Record<string, unknown> {');
+    w.indent(() {
+      w.writeln('return {');
+      w.indent(() {
+        w.writeln("__className__: '$classNamePrefix${model.className}',");
+        for (final field in allFields) {
+          final type = mapper.map(field.type);
+          final value = type.toJsonExpr('this.${field.name}');
+          w.writeln(
+            field.type.nullable
+                ? '...(this.${field.name} !== null && { ${field.name}: $value }),'
+                : '${field.name}: $value,',
+          );
+        }
+      });
+      w.writeln('};');
+    });
+    w.writeln('}');
+  }
+
+  /// A nullable field is cleared by passing it as `null`; leaving the key
+  /// out keeps the current value.
+  void _writeCopyWith(
+    TsWriter w,
+    ClassDefinition model,
+    List<SerializableModelFieldDefinition> allFields,
+  ) {
+    if (allFields.isEmpty) {
+      w.writeln('copyWith(): ${model.className} {');
+      w.indent(() => w.writeln('return new ${model.className}();'));
+      w.writeln('}');
+      return;
+    }
+    w.writeln('copyWith(partial: Partial<{');
+    w.indent(() {
+      for (final field in allFields) {
+        w.writeln('${field.name}: ${mapper.map(field.type).tsType};');
+      }
+    });
+    w.writeln('}>): ${model.className} {');
+    w.indent(() {
+      w.writeln('return new ${model.className}({');
+      w.indent(() {
+        for (final field in allFields) {
+          w.writeln(
+            field.type.nullable
+                ? "${field.name}: '${field.name}' in partial "
+                    '? (partial.${field.name} ?? null) : this.${field.name},'
+                : '${field.name}: partial.${field.name} ?? this.${field.name},',
+          );
+        }
+      });
+      w.writeln('});');
+    });
+    w.writeln('}');
   }
 
   String _emitEnum(EnumDefinition model) {

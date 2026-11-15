@@ -15,7 +15,6 @@ import 'package:serverpod_cli/src/analyzer/dart/definitions.dart'
 import 'package:serverpod_cli/src/analyzer/models/stateful_analyzer.dart';
 import 'package:serverpod_cli/src/config/config.dart' show ModuleConfig;
 import 'package:serverpod_cli/src/config/experimental_feature.dart';
-import 'package:serverpod_cli/src/config/serverpod_feature.dart';
 import 'package:serverpod_cli/src/generator/code_generation_collector.dart';
 import 'package:serverpod_cli/src/util/model_helper.dart';
 import 'package:serverpod_shared/serverpod_shared.dart' show DatabaseDialect;
@@ -113,22 +112,26 @@ class ProtocolLoader {
     final generatorYaml = _readGeneratorYaml(serverDirectory);
     final clientPath = generatorYaml['client_package_path'] is String
         ? generatorYaml['client_package_path'] as String
-        : '../${pubspecName}_client';
+        : '../${_stripServerSuffix(pubspecName)}_client';
 
+    // The project name is the server package without `_server`, as
+    // `GeneratorConfig.load` derives it. It is what Serverpod prefixes a
+    // module's class names with on the wire (`serverpod_auth_core.AuthUser`).
+    final name = _stripServerSuffix(pubspecName);
     return GeneratorConfig(
-      name: pubspecName,
+      name: name,
       type: PackageType.module,
       serverPackage: pubspecName,
-      dartClientPackage: '${pubspecName}_client',
+      dartClientPackage: '${name}_client',
       dartClientDependsOnServiceClient: false,
       serverPackageDirectoryPathParts: dirParts,
       sharedModelsSourcePathsParts: const {},
       relativeDartClientPackagePathParts: p.split(clientPath),
       modules: _moduleDependenciesFor(generatorYaml, knownModules),
       extraClasses: const [],
-      enabledFeatures: ServerpodFeature.values
-          .where((f) => f.defaultValue)
-          .toList(),
+      // Module sources declare table models; with the database off the
+      // analyzer rejects every `table:` key they carry.
+      isDatabaseEnabled: true,
       databaseDialect: DatabaseDialect.postgres,
     );
   }

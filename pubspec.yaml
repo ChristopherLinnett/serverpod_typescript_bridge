@@ -3,12 +3,12 @@ description: >-
   Generates a fully-typed TypeScript client for a Serverpod project, mirroring
   the behaviour of `serverpod generate` for Dart clients. Drop-in tooling for
   React/TypeScript SPAs powered by a Serverpod backend.
-version: 0.2.4
+version: 0.3.0
 repository: https://github.com/ChristopherLinnett/serverpod_typescript_bridge
 issue_tracker: https://github.com/ChristopherLinnett/serverpod_typescript_bridge/issues
 
 environment:
-  sdk: ^3.11.4
+  sdk: ^3.12.2
 
 executables:
   serverpod_typescript_bridge:
@@ -17,16 +17,16 @@ dependencies:
   args: ^2.5.0
   path: ^1.9.0
   yaml: ^3.1.2
-  analyzer: ^8.1.0
+  analyzer: ">=10.0.0 <14.0.0"
   pub_semver: ^2.1.4
   meta: ^1.16.0
   # Reuses serverpod_cli's analyzer to produce the IR we walk when
   # emitting TypeScript. Pinned to a minor range — coupling to internal
   # `src/` is documented in lib/src/analyzer/protocol_loader.dart.
-  serverpod_cli: ^3.4.7
+  serverpod_cli: ^4.1.2
   # We construct a synthetic GeneratorConfig for module-from-pub-cache
   # loading; that requires DatabaseDialect from serverpod_shared.
-  serverpod_shared: ^3.4.7
+  serverpod_shared: ^4.1.2
 
 dev_dependencies:
   lints: ^6.0.0

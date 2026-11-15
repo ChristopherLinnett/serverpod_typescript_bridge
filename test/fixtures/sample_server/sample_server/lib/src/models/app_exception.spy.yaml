@@ -1,0 +1,5 @@
+### Base of the application's typed exceptions.
+exception: AppException
+fields:
+  ### Human-readable message.
+  message: String

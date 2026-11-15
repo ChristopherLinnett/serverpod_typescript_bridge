@@ -12,7 +12,8 @@
 part of 'animal.dart';
 
 /// A dog. Concrete subclass of the sealed [Animal].
-abstract class Dog extends _i1.Animal implements _i2.SerializableModel {
+abstract class Dog extends _il2as5qe.Animal
+    implements _isc.SerializableModel, _isc.ProtocolSerialization {
   Dog._({
     required super.name,
     required this.breed,
@@ -29,7 +30,7 @@ abstract class Dog extends _i1.Animal implements _i2.SerializableModel {
     return Dog(
       name: jsonSerialization['name'] as String,
       breed: jsonSerialization['breed'] as String,
-      goodWithKids: _i2.BoolJsonExtension.fromJson(
+      goodWithKids: _isc.BoolJsonExtension.fromJson(
         jsonSerialization['goodWithKids'],
       ),
     );
@@ -44,7 +45,7 @@ abstract class Dog extends _i1.Animal implements _i2.SerializableModel {
   /// Returns a shallow copy of this [Dog]
   /// with some or all fields replaced by the given arguments.
   @override
-  @_i2.useResult
+  @_isc.useResult
   Dog copyWith({
     String? name,
     String? breed,
@@ -61,8 +62,18 @@ abstract class Dog extends _i1.Animal implements _i2.SerializableModel {
   }
 
   @override
+  Map<String, dynamic> toJsonForProtocol() {
+    return {
+      '__className__': 'Dog',
+      'name': name,
+      'breed': breed,
+      'goodWithKids': goodWithKids,
+    };
+  }
+
+  @override
   String toString() {
-    return _i2.SerializationManager.encode(this);
+    return _isc.SerializationManager.encode(this);
   }
 }
 
@@ -79,7 +90,7 @@ class _DogImpl extends Dog {
 
   /// Returns a shallow copy of this [Dog]
   /// with some or all fields replaced by the given arguments.
-  @_i2.useResult
+  @_isc.useResult
   @override
   Dog copyWith({
     String? name,

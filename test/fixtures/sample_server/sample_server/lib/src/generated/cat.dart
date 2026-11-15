@@ -12,8 +12,8 @@
 part of 'animal.dart';
 
 /// A cat. Concrete subclass of the sealed [Animal].
-abstract class Cat extends _i1.Animal
-    implements _i2.SerializableModel, _i2.ProtocolSerialization {
+abstract class Cat extends _il2as5qe.Animal
+    implements _is.SerializableModel, _is.ProtocolSerialization {
   Cat._({
     required super.name,
     required this.livesRemaining,
@@ -30,7 +30,7 @@ abstract class Cat extends _i1.Animal
     return Cat(
       name: jsonSerialization['name'] as String,
       livesRemaining: jsonSerialization['livesRemaining'] as int,
-      isIndoor: _i2.BoolJsonExtension.fromJson(jsonSerialization['isIndoor']),
+      isIndoor: _is.BoolJsonExtension.fromJson(jsonSerialization['isIndoor']),
     );
   }
 
@@ -43,7 +43,7 @@ abstract class Cat extends _i1.Animal
   /// Returns a shallow copy of this [Cat]
   /// with some or all fields replaced by the given arguments.
   @override
-  @_i2.useResult
+  @_is.useResult
   Cat copyWith({
     String? name,
     int? livesRemaining,
@@ -71,7 +71,7 @@ abstract class Cat extends _i1.Animal
 
   @override
   String toString() {
-    return _i2.SerializationManager.encode(this);
+    return _is.SerializationManager.encode(this);
   }
 }
 
@@ -88,7 +88,7 @@ class _CatImpl extends Cat {
 
   /// Returns a shallow copy of this [Cat]
   /// with some or all fields replaced by the given arguments.
-  @_i2.useResult
+  @_is.useResult
   @override
   Cat copyWith({
     String? name,

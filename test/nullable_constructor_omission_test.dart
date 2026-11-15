@@ -154,6 +154,7 @@ void main() {
         className: 'NotFoundException',
         type: selfType('NotFoundException'),
         serverOnly: false,
+        isSealed: false,
         fields: [
           field('message', 'String'),
           field('resourceId', 'String', nullable: true),

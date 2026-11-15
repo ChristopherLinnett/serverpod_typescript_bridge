@@ -10,32 +10,32 @@
 // ignore_for_file: invalid_use_of_internal_member
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'package:serverpod_client/serverpod_client.dart' as _i1;
-import 'dart:async' as _i2;
+import 'dart:async' as _ida;
+import 'package:serverpod_client/serverpod_client.dart' as _isc;
 
 /// {@category Endpoint}
-class EndpointModule extends _i1.EndpointRef {
-  EndpointModule(_i1.EndpointCaller caller) : super(caller);
+class EndpointModule extends _isc.EndpointRef {
+  EndpointModule(_isc.EndpointCaller caller) : super(caller);
 
   @override
   String get name => 'testmod.module';
 
-  _i2.Future<String> hello(String name) => caller.callServerEndpoint<String>(
+  _ida.Future<String> hello(String name) => caller.callServerEndpoint<String>(
     'testmod.module',
     'hello',
     {'name': name},
   );
 }
 
-class Caller extends _i1.ModuleEndpointCaller {
-  Caller(_i1.ServerpodClientShared client) : super(client) {
+class Caller extends _isc.ModuleEndpointCaller {
+  Caller(_isc.ServerpodClientShared client) : super(client) {
     module = EndpointModule(this);
   }
 
   late final EndpointModule module;
 
   @override
-  Map<String, _i1.EndpointRef> get endpointRefLookup => {
+  Map<String, _isc.EndpointRef> get endpointRefLookup => {
     'testmod.module': module,
   };
 }

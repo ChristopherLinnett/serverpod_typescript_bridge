@@ -10,19 +10,19 @@
 // ignore_for_file: invalid_use_of_internal_member
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'protocol.dart' as _i1;
-import 'package:serverpod/serverpod.dart' as _i2;
-import 'priority.dart' as _i3;
-import 'colour.dart' as _i4;
-import 'animal.dart' as _i5;
-import 'package:sample_server/src/generated/protocol.dart' as _i6;
+import 'package:sample_server/src/generated/protocol.dart' as _ihzje0n3;
+import 'package:serverpod/serverpod.dart' as _is;
+import 'animal.dart' as _icwrltez;
+import 'colour.dart' as _iy6jkkge;
+import 'priority.dart' as _isecxwh3;
+import 'protocol.dart' as _il2as5qe;
 
 /// Profile for an administrator.
 ///
 /// Exercises non-sealed inheritance — `AdminProfile` extends [UserProfile]
 /// and adds a privilege scope.
-abstract class AdminProfile extends _i1.UserProfile
-    implements _i2.SerializableModel, _i2.ProtocolSerialization {
+abstract class AdminProfile extends _il2as5qe.UserProfile
+    implements _is.SerializableModel, _is.ProtocolSerialization {
   AdminProfile._({
     required super.id,
     required super.displayName,
@@ -50,12 +50,12 @@ abstract class AdminProfile extends _i1.UserProfile
     required DateTime createdAt,
     required Duration membershipDuration,
     required BigInt karma,
-    required _i2.UuidValue deviceId,
+    required _is.UuidValue deviceId,
     String? bio,
-    required _i3.Priority priority,
-    _i4.Colour? favouriteColour,
-    _i5.Animal? pet,
-    required List<_i3.Priority> priorityHistory,
+    required _isecxwh3.Priority priority,
+    _iy6jkkge.Colour? favouriteColour,
+    _icwrltez.Animal? pet,
+    required List<_isecxwh3.Priority> priorityHistory,
     required String scope,
   }) = _AdminProfileImpl;
 
@@ -65,30 +65,35 @@ abstract class AdminProfile extends _i1.UserProfile
       displayName: jsonSerialization['displayName'] as String,
       birthYear: jsonSerialization['birthYear'] as int?,
       rating: (jsonSerialization['rating'] as num).toDouble(),
-      isPublic: _i2.BoolJsonExtension.fromJson(jsonSerialization['isPublic']),
-      createdAt: _i2.DateTimeJsonExtension.fromJson(
+      isPublic: _is.BoolJsonExtension.fromJson(jsonSerialization['isPublic']),
+      createdAt: _is.DateTimeJsonExtension.fromJson(
         jsonSerialization['createdAt'],
       ),
-      membershipDuration: _i2.DurationJsonExtension.fromJson(
+      membershipDuration: _is.DurationJsonExtension.fromJson(
         jsonSerialization['membershipDuration'],
       ),
-      karma: _i2.BigIntJsonExtension.fromJson(jsonSerialization['karma']),
-      deviceId: _i2.UuidValueJsonExtension.fromJson(
+      karma: _is.BigIntJsonExtension.fromJson(jsonSerialization['karma']),
+      deviceId: _is.UuidValueJsonExtension.fromJson(
         jsonSerialization['deviceId'],
       ),
       bio: jsonSerialization['bio'] as String?,
-      priority: _i3.Priority.fromJson((jsonSerialization['priority'] as int)),
+      priority: _isecxwh3.Priority.fromJson(
+        (jsonSerialization['priority'] as int),
+      ),
       favouriteColour: jsonSerialization['favouriteColour'] == null
           ? null
-          : _i4.Colour.fromJson(
+          : _iy6jkkge.Colour.fromJson(
               (jsonSerialization['favouriteColour'] as String),
             ),
       pet: jsonSerialization['pet'] == null
           ? null
-          : _i6.Protocol().deserialize<_i5.Animal>(jsonSerialization['pet']),
-      priorityHistory: _i6.Protocol().deserialize<List<_i3.Priority>>(
-        jsonSerialization['priorityHistory'],
-      ),
+          : _ihzje0n3.Protocol().deserialize<_icwrltez.Animal>(
+              jsonSerialization['pet'],
+            ),
+      priorityHistory: _ihzje0n3.Protocol()
+          .deserialize<List<_isecxwh3.Priority>>(
+            jsonSerialization['priorityHistory'],
+          ),
       scope: jsonSerialization['scope'] as String,
     );
   }
@@ -99,7 +104,7 @@ abstract class AdminProfile extends _i1.UserProfile
   /// Returns a shallow copy of this [AdminProfile]
   /// with some or all fields replaced by the given arguments.
   @override
-  @_i2.useResult
+  @_is.useResult
   AdminProfile copyWith({
     int? id,
     String? displayName,
@@ -109,12 +114,12 @@ abstract class AdminProfile extends _i1.UserProfile
     DateTime? createdAt,
     Duration? membershipDuration,
     BigInt? karma,
-    _i2.UuidValue? deviceId,
+    _is.UuidValue? deviceId,
     Object? bio,
-    _i3.Priority? priority,
+    _isecxwh3.Priority? priority,
     Object? favouriteColour,
     Object? pet,
-    List<_i3.Priority>? priorityHistory,
+    List<_isecxwh3.Priority>? priorityHistory,
     String? scope,
   });
   @override
@@ -163,7 +168,7 @@ abstract class AdminProfile extends _i1.UserProfile
 
   @override
   String toString() {
-    return _i2.SerializationManager.encode(this);
+    return _is.SerializationManager.encode(this);
   }
 }
 
@@ -179,12 +184,12 @@ class _AdminProfileImpl extends AdminProfile {
     required DateTime createdAt,
     required Duration membershipDuration,
     required BigInt karma,
-    required _i2.UuidValue deviceId,
+    required _is.UuidValue deviceId,
     String? bio,
-    required _i3.Priority priority,
-    _i4.Colour? favouriteColour,
-    _i5.Animal? pet,
-    required List<_i3.Priority> priorityHistory,
+    required _isecxwh3.Priority priority,
+    _iy6jkkge.Colour? favouriteColour,
+    _icwrltez.Animal? pet,
+    required List<_isecxwh3.Priority> priorityHistory,
     required String scope,
   }) : super._(
          id: id,
@@ -206,7 +211,7 @@ class _AdminProfileImpl extends AdminProfile {
 
   /// Returns a shallow copy of this [AdminProfile]
   /// with some or all fields replaced by the given arguments.
-  @_i2.useResult
+  @_is.useResult
   @override
   AdminProfile copyWith({
     int? id,
@@ -217,12 +222,12 @@ class _AdminProfileImpl extends AdminProfile {
     DateTime? createdAt,
     Duration? membershipDuration,
     BigInt? karma,
-    _i2.UuidValue? deviceId,
+    _is.UuidValue? deviceId,
     Object? bio = _Undefined,
-    _i3.Priority? priority,
+    _isecxwh3.Priority? priority,
     Object? favouriteColour = _Undefined,
     Object? pet = _Undefined,
-    List<_i3.Priority>? priorityHistory,
+    List<_isecxwh3.Priority>? priorityHistory,
     String? scope,
   }) {
     return AdminProfile(
@@ -237,10 +242,10 @@ class _AdminProfileImpl extends AdminProfile {
       deviceId: deviceId ?? this.deviceId,
       bio: bio is String? ? bio : this.bio,
       priority: priority ?? this.priority,
-      favouriteColour: favouriteColour is _i4.Colour?
+      favouriteColour: favouriteColour is _iy6jkkge.Colour?
           ? favouriteColour
           : this.favouriteColour,
-      pet: pet is _i5.Animal? ? pet : this.pet?.copyWith(),
+      pet: pet is _icwrltez.Animal? ? pet : this.pet?.copyWith(),
       priorityHistory:
           priorityHistory ?? this.priorityHistory.map((e0) => e0).toList(),
       scope: scope ?? this.scope,
