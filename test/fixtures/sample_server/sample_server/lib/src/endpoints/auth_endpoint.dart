@@ -21,4 +21,9 @@ class AuthEndpoint extends Endpoint {
 
   /// Echo a string only authenticated callers can reach.
   Future<String> secret(Session session) async => 'shhh';
+
+  /// The same gate on the stream transport.
+  Stream<String> whoAmIStream(Session session) async* {
+    yield session.authenticated?.userIdentifier ?? 'anonymous';
+  }
 }

@@ -4,7 +4,17 @@ Generate a fully-typed TypeScript client for a Serverpod project — drop-in par
 
 ## Status
 
-**v0.2 — module-aware.** The generator produces a tsc-clean, type-safe TypeScript client for any Serverpod project, including projects that depend on modules (`serverpod_auth_idp_server`, `serverpod_cloud_storage_s3`, etc.). Module clients are generated in-place as siblings of the app client and wired through `file:..` deps — no npm publishing required.
+**v0.3 — Serverpod 4.** The generator produces a type-safe TypeScript client for any Serverpod 4 project, including projects that depend on modules (`serverpod_auth_idp_server`, `serverpod_cloud_storage_s3`, etc.). Module clients are generated in-place as siblings of the app client and wired through `file:..` deps — no npm publishing required.
+
+The generated client is exercised end to end: the test suite boots a real Serverpod server and drives every fixture endpoint from Node through the generated code, over HTTP and WebSocket.
+
+## Requirements
+
+| | Version |
+|---|---|
+| Serverpod | 4.1 or newer (the streaming protocol changed in 4.0; a 3.x server needs `v0.2.4`) |
+| Dart SDK | 3.12.2 or newer |
+| Runtime for the generated client | any current browser, or Node 22+ (the client uses the global `fetch`, `WebSocket` and `crypto`) |
 
 ## Quick start
 
@@ -15,7 +25,7 @@ dev_dependencies:
   serverpod_typescript_bridge:
     git:
       url: https://github.com/ChristopherLinnett/serverpod_typescript_bridge.git
-      ref: v0.2.4   # or any later tag
+      ref: v0.3.0   # or any later tag
 ```
 
 Then:
@@ -72,37 +82,42 @@ const dives = await client.dives.getJoinedDives(
 import { AuthSuccess } from 'serverpod_auth_idp_typescript_client';
 ```
 
-## Supported in v0.2
+## Supported
 
 | Feature | Status | Notes |
 |---|---|---|
-| Endpoint methods (unary HTTP) | ✅ | required/optional positional + named params |
+| Endpoint methods (unary HTTP) | ✅ | required/optional positional + named params; every argument is encoded by its declared type |
 | Doc-comment passthrough | ✅ | Dart `///` and `{@template}`/`{@macro}` → TSDoc |
 | `@unauthenticatedClientCall` | ✅ | flips `authenticated: false` per call |
 | `@Deprecated` | ✅ | propagates to JSDoc `@deprecated` |
-| Primitives | ✅ | int, double, String, bool, DateTime, Duration, BigInt, UuidValue, ByteData |
+| Primitives | ✅ | int, double, String, bool, DateTime, Duration, BigInt, UuidValue, Uri, ByteData |
+| Vectors and geography | ✅ | `Vector` / `HalfVector` → `number[]`; `SparseVector`, `Bit` and the `Geography*` types → `string` (pgvector text and EWKT, the forms Serverpod sends) |
 | Collections | ✅ | `List<T>`, `Set<T>`, `Map<String,V>`, `Map<K,V>` (non-string-keyed wire form) |
-| Nullables | ✅ | `T?` → `T \| null`; nullable fields are OMITTABLE on model/exception constructor `init` bags (default to `null`); `copyWith` honours explicit `null` vs "leave alone" |
-| Sealed hierarchies | ✅ | discriminated-union TS type + `<Name>Base.fromJson` dispatch on `__className__` |
-| Multi-level sealed | ✅ | every concrete subclass dispatches through every sealed ancestor |
-| Enums | ✅ | both `byIndex` and `byName` |
-| Exceptions | ✅ | `SerializableException` subclasses extend `Error` and round-trip via `Protocol` |
+| Nullables | ✅ | `T?` → `T \| null`; nullable fields are omittable on constructor `init` bags; `copyWith` tells an explicit `null` from "leave alone" |
+| Field defaults | ✅ | a field with `default=` / `defaultModel=` is omittable and falls back to the same value the Dart client uses |
+| Inheritance | ✅ | `extends` is real class inheritance: a subclass carries its parent's fields and is an `instanceof` its parent; a subclass returned where the parent is declared arrives as the subclass |
+| Sealed hierarchies | ✅ | discriminated-union type + abstract `<Name>Base`, any depth; decoded by `__className__` |
+| Enums | ✅ | both `byIndex` and `byName`, as arguments, fields, collection members and stream values |
+| Exceptions | ✅ | `SerializableException` subclasses extend `Error`, may extend each other, and arrive typed from both transports |
 | Modules (`type: module`) | ✅ | emits `<Nickname>Caller extends ModuleEndpointCaller` + `modulePrefix` const |
-| Module dependencies (consumer side) | ✅ | recursively generates a TS client per module, wires `file:..` deps in `package.json`, emits cross-package `import { Name } from '<module-pkg>';` lines |
-| Cross-module protocol dispatch | ✅ | Protocol switch routes `<prefix>.<Class>` envelopes through the matching module's `<Name>(.fromJson\|Codec.fromJson\|Base.fromJson)` |
-| HTTP unary calls | ✅ | fetch-based; status mapping; auth header; one-shot 401 refresh |
-| Output streams | ✅ | `Stream<T>` returns → `AsyncIterable<T>`; WebSocket transport |
-| Bidirectional streams | ✅ | `Stream<T>` parameter → `streams: { name: AsyncIterable<T> }`; values forwarded as `MethodStreamMessage` frames |
-| Typed exceptions | ✅ | `{className, data}` envelope decoded via `Protocol.deserializeByClassName` |
+| Module dependencies (consumer side) | ✅ | recursively generates a TS client per module, wires `file:..` deps in `package.json`, emits cross-package imports |
+| Cross-module protocol dispatch | ✅ | Protocol switch routes `<module>.<Class>` envelopes through the matching module's decoder |
+| HTTP unary calls | ✅ | fetch-based; status mapping; auth header; one retry after a 401 when the auth provider can refresh |
+| Output streams | ✅ | `Stream<T>` return → `AsyncIterable<T>`; breaking out of the loop stops the server |
+| Input and bidirectional streams | ✅ | `Stream<T>` parameter → `streams: { name: AsyncIterable<T> }`; a `Future<T>` return alongside input streams is a `Promise<T>` |
+| Typed exceptions | ✅ | thrown from a unary call or raised mid-stream |
 
-## Out of scope (post-v0.2)
+## Not supported yet
 
-| Feature | Tracker |
+`generate` prints a warning naming each type it could not express; those are typed `unknown` and passed through unencoded.
+
+| Feature | Notes |
 |---|---|
-| Records (Dart 3 records as endpoint params/return) | post-v0.2 |
-| Watch mode (`-w`) | post-v0.2 |
-| Typed module-Caller surface (currently `Modules.<nickname>: unknown` stub; cross-package types resolve directly through their imports) | post-v0.2 |
-| `dart run serverpod_typescript_bridge inspect` polish | works, but undocumented; primarily a debug surface |
+| Records (Dart 3 records as endpoint params/returns or fields) | typed `unknown` |
+| `dynamic` values | typed `unknown`; Serverpod wraps them in a `{className, data}` pair the client does not unwrap |
+| Typed module-Caller surface | `Modules.<nickname>` is an `unknown` stub. Module *types* resolve through their generated packages, and a module's endpoints that the app re-exposes (the Serverpod 4 auth modules work this way) are ordinary app endpoints |
+| File uploads, connectivity monitoring | not ported from the Dart client |
+| Watch mode (`-w`) | |
 
 ## CLI reference
 

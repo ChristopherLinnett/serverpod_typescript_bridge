@@ -10,8 +10,8 @@
 // ignore_for_file: invalid_use_of_internal_member
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'protocol.dart' as _i1;
-import 'package:serverpod_client/serverpod_client.dart' as _i2;
+import 'package:serverpod_client/serverpod_client.dart' as _isc;
+import 'protocol.dart' as _il2as5qe;
 part 'cat.dart';
 part 'dog.dart';
 
@@ -19,7 +19,8 @@ part 'dog.dart';
 ///
 /// Sub-types ([Dog], [Cat]) discriminate via `__className__` on the wire.
 /// Used as the parity oracle for sealed/polymorphic emission.
-sealed class Animal implements _i2.SerializableModel {
+sealed class Animal
+    implements _isc.SerializableModel, _isc.ProtocolSerialization {
   Animal({required this.name});
 
   /// The animal's name.
@@ -27,6 +28,6 @@ sealed class Animal implements _i2.SerializableModel {
 
   /// Returns a shallow copy of this [Animal]
   /// with some or all fields replaced by the given arguments.
-  @_i2.useResult
+  @_isc.useResult
   Animal copyWith({String? name});
 }

@@ -95,16 +95,29 @@ class GenerationPipeline {
     );
     await scaffold.emit();
 
+    // Serverpod's own generator prefixes class names with the package name
+    // for everything that is not an app server.
+    final classNamePrefix =
+        config.type == PackageType.server ? '' : '${config.name}.';
+    final modelMapper = mapperConfig.build(modelPrefix: '');
+    final endpointMapper = mapperConfig.build(modelPrefix: 'p.');
     ModelEmitter(
       outputDir: outputDir,
       tracker: tracker,
-      mapper: mapperConfig.build(modelPrefix: ''),
+      mapper: modelMapper,
+      classNamePrefix: classNamePrefix,
     ).emitAll(ir.models);
     EndpointEmitter(
       outputDir: outputDir,
       tracker: tracker,
-      mapper: mapperConfig.build(modelPrefix: 'p.'),
+      mapper: endpointMapper,
+      modules: config.modules,
+      classNamePrefix: classNamePrefix,
     ).emitAll(ir.endpoints);
+    _warnAboutUnsupportedTypes(config.name, {
+      ...modelMapper.unsupportedTypes,
+      ...endpointMapper.unsupportedTypes,
+    });
     ClientEmitter(
       outputDir: outputDir,
       tracker: tracker,
@@ -114,6 +127,21 @@ class GenerationPipeline {
     ).emit(endpoints: ir.endpoints, models: ir.models);
 
     tracker.sweepOrphans();
+  }
+
+  /// A type the mapper cannot express is emitted as `unknown` and crosses
+  /// the wire unencoded; the generated code compiles either way, so this
+  /// warning is the only place the gap shows.
+  static void _warnAboutUnsupportedTypes(String project, Set<String> types) {
+    if (types.isEmpty) return;
+    final sorted = types.toList()..sort();
+    stderr.writeln(
+      'Warning: $project uses ${sorted.length} type(s) the TypeScript '
+      'client cannot express yet; each is typed `unknown` and sent as is:',
+    );
+    for (final type in sorted) {
+      stderr.writeln('  - $type');
+    }
   }
 
   static Future<GeneratorConfig> _loadConfig(Directory serverDir) async {

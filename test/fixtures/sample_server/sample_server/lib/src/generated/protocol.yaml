@@ -1,6 +1,7 @@
 auth:
   - whoAmI:
   - secret:
+  - whoAmIStream:
 chat:
   - echoStream:
 collections:
@@ -8,6 +9,12 @@ collections:
   - echoStringSet:
   - echoStringIntMap:
   - echoIntStringMap:
+enums:
+  - echoPriority:
+  - echoColour:
+  - echoNullablePriority:
+  - echoPriorities:
+  - echoColourMap:
 legacy:
   - greet:
   - sayHi:
@@ -21,6 +28,16 @@ nullables:
   - nullableString:
   - nullableProfile:
   - nullableList:
+params:
+  - named:
+  - optional:
+  - typed:
+  - echoSettings:
+  - defaultSettings:
+  - echoEmbedding:
+  - throwQuota:
+  - asParent:
+  - echoUri:
 primitives:
   - echoInt:
   - echoDouble:
@@ -36,3 +53,14 @@ public:
   - hello:
 streaming:
   - countTo:
+  - endless:
+  - profiles:
+  - animals:
+  - priorities:
+  - chunks:
+  - failAfter:
+  - sum:
+  - drain:
+  - echoAnimals:
+  - describeLists:
+  - describePriorities:

@@ -1,0 +1,15 @@
+### A model whose fields carry defaults.
+class: Settings
+fields:
+  ### Defaults to 3.
+  count: int, default=3
+  ### Defaults to `'untitled'`.
+  label: String, default='untitled'
+  ### Defaults to `true`.
+  enabled: bool, default=true
+  ### Defaults to `normal`.
+  mode: Priority, default=normal
+  ### Defaults to 1.5.
+  ratio: double, default=1.5
+  ### No default; nullable.
+  note: String?

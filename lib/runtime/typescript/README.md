@@ -16,8 +16,8 @@ A migration to a published npm package was originally pencilled in for v0.2 but 
 | `endpoint.ts`      | `EndpointRef`, `EndpointCaller`, `ModuleEndpointCaller`, `HttpEndpointCaller` |
 | `http_transport.ts`| `HttpTransport`, `UnaryCallOptions` — fetch-based unary call dispatcher; auth header + 401-refresh |
 | `ws_transport.ts`  | `ClientMethodStreamManager`, `InputStreamSpec` — multiplexed WebSocket streaming dispatcher (output, output-only, and bidi) with status-mapped open errors, server `ping`/`pong`, `bad_request` propagation, and per-handler iterator semantics |
-| `ws_messages.ts`   | Sealed message types matching `websocket_messages.dart`; `parseEnvelope`, `buildEnvelope` |
-| `serialization.ts` | `SerializationManager` (abstract; project `Protocol` extends it) + per-primitive `encode*` / `decode*` helpers, `decodeMap`, `decodeRecord` |
+| `ws_messages.ts`   | Serverpod 4's method-stream frames: key tables matching `websocket_message_keys.dart`, one builder per frame, `parseEnvelope`, `classNamed` |
+| `serialization.ts` | `SerializationManager` (abstract; project `Protocol` extends it), `ModelRegistry`, per-primitive `encode*` / `decode*` helpers, `decodeMap`, `decodeRecord`, UUID generators |
 | `exceptions.ts`    | `ServerpodClientException` and the 5 status-mapped subclasses (400/401/403/404/500), plus `exceptionFromStatus` |
 | `types.ts`         | `SerializableModel`, `SerializableException`, `ClientOptions`, `MethodCallContext`, `ClientAuthKeyProvider`, `RefreshableClientAuthKeyProvider` |
 | `index.ts`         | Barrel re-export |
@@ -30,8 +30,11 @@ The runtime mirrors `serverpod_serialization` byte-for-byte. Highlights:
 - **HTTP error mapping:** `400 → BadRequest`, `401 → Unauthorized`, `403 → Forbidden`, `404 → NotFound`, `500 → InternalServerError`. Typed `{className, data}` envelopes decode through `Protocol.deserializeByClassName(...)` and throw the resulting `Error` subclass.
 - **Auth header:** `Authorization: <wrappedAuthValue>`. Suppressed when the call site sets `{ authenticated: false }`.
 - **Auth refresh:** if the provider implements `RefreshableClientAuthKeyProvider` and the server returns 401, the runtime calls `refresh()` once and retries.
-- **WebSocket streaming:** `ws(s)://<host>/v1/websocket?auth=<rawKey>`. The runtime derives the WS scheme from the configured host via `host.replace(/^http/, 'ws')`, so an `https://` host upgrades to `wss://` automatically; an `http://` host stays plain `ws://`. The runtime also strips a `Bearer ` / `Basic ` prefix from the auth header value before putting it in the query. Messages use a `{type, data}` envelope; `OpenMethodStreamCommand` carries `args` as a *double-encoded JSON string* matching the Dart contract. Server-initiated `ping` is replied to with `pong`; `bad_request` fails every active handler with a 400-status exception.
-- **Primitive encodings:** ISO-8601 UTC for `Date`, integer ms for `Duration`, base64 for `Uint8Array`, string for `BigInt`, list of `{k,v}` for non-string-keyed `Map`s; `Map<String,V>` decodes to a real `Record<string,V>` via `decodeRecord`.
+- **WebSocket streaming:** `ws(s)://<host>/v1/websocket`, one connection per client, opened by the first streaming call and closed when the last stream ends. Frames follow Serverpod 4's method-stream protocol: `{type, data}` with abbreviated keys, a UUID connection id, a `done`/`error` reason on every close, and credentials in the open command (not the URL). Pings on connect and every 20 s; a connection silent for 40 s is dropped. Each stream value is a `{className, data}` pair.
+- **Primitive encodings:** ISO-8601 UTC for `Date`, integer ms for `Duration`, `decode('<base64>', 'base64')` for `Uint8Array`, string for `BigInt`, list of `{k,v}` for non-string-keyed `Map`s, pgvector text (`[1.0,2.5]`) for vectors; `Map<String,V>` decodes to a real `Record<string,V>` via `decodeRecord`.
+- **Models:** `ModelRegistry` holds a package's decoders by class name; generated model files register themselves and decode each other through it, following the `__className__` on the wire.
+
+The runtime needs the global `fetch`, `WebSocket` and `crypto`: any current browser, or Node 22+.
 
 See [`docs/architecture.md`](../../../docs/architecture.md) in the parent Dart package for the canonical Dart→TS mapping table.
 

@@ -68,4 +68,30 @@ void main() {
       expect(primitives.methods, isNotEmpty);
     });
   });
+
+  group('ProtocolLoader.synthesizeModuleConfig (against sample_module)', () {
+    final moduleDir = Directory('test/fixtures/sample_module/testmod_server');
+
+    test('names the project as Serverpod does: the package without _server',
+        () {
+      final config = ProtocolLoader.synthesizeModuleConfig(moduleDir);
+
+      // The name is what a module's class names are prefixed with on the
+      // wire (`testmod.ModuleClass`), so it has to match the name
+      // `GeneratorConfig.load` gives the same package.
+      expect(config.name, 'testmod');
+      expect(config.serverPackage, 'testmod_server');
+      expect(config.dartClientPackage, 'testmod_client');
+      expect(config.type, PackageType.module);
+    });
+
+    test('agrees with GeneratorConfig.load on the project name', () async {
+      final loaded = await GeneratorConfig.load(
+        serverRootDir: moduleDir.path,
+        interactive: false,
+      );
+
+      expect(ProtocolLoader.synthesizeModuleConfig(moduleDir).name, loaded.name);
+    });
+  });
 }

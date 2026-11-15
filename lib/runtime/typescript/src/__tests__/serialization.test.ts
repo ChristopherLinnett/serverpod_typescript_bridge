@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bareClassName,
   decodeBigInt,
   decodeBool,
   decodeBytes,
@@ -8,8 +9,13 @@ import {
   decodeList,
   decodeMap,
   decodeSet,
+  decodeVector,
   encodeBigInt,
   encodeBytes,
+  encodeVector,
+  ModelRegistry,
+  randomUuidV4,
+  randomUuidV7,
   encodeDateTime,
   encodeDuration,
   encodeList,
@@ -93,9 +99,9 @@ describe('bool', () => {
 });
 
 describe('Bytes (ByteData)', () => {
-  it('encodes to base64', () => {
+  it("encodes as Serverpod's decode('<base64>', 'base64') literal", () => {
     const bytes = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]); // "hello"
-    expect(encodeBytes(bytes)).toBe('aGVsbG8=');
+    expect(encodeBytes(bytes)).toBe("decode('aGVsbG8=', 'base64')");
   });
 
   it('round-trips', () => {
@@ -106,8 +112,8 @@ describe('Bytes (ByteData)', () => {
 
   it('handles empty input', () => {
     const empty = new Uint8Array(0);
-    const round = decodeBytes(encodeBytes(empty));
-    expect(round.length).toBe(0);
+    expect(encodeBytes(empty)).toBe("decode('', 'base64')");
+    expect(decodeBytes(encodeBytes(empty)).length).toBe(0);
   });
 
   it.each([
@@ -115,9 +121,115 @@ describe('Bytes (ByteData)', () => {
     [[0x4d, 0x61], 'TWE='], // two bytes
     [[0x4d, 0x61, 0x6e], 'TWFu'], // three bytes (no padding)
   ])('matches RFC 4648 padding for %j → %s', (bytes, expected) => {
-    expect(encodeBytes(new Uint8Array(bytes))).toBe(expected);
-    const decoded = decodeBytes(expected);
-    expect(Array.from(decoded)).toEqual(bytes);
+    expect(encodeBytes(new Uint8Array(bytes))).toBe(
+      `decode('${expected}', 'base64')`,
+    );
+  });
+
+  it('decodes bare base64 as well as the wrapped literal', () => {
+    expect(Array.from(decodeBytes('TWFu'))).toEqual([0x4d, 0x61, 0x6e]);
+    expect(Array.from(decodeBytes("decode('TWFu', 'base64')"))).toEqual([
+      0x4d, 0x61, 0x6e,
+    ]);
+  });
+});
+
+describe('Vector', () => {
+  it('writes every component with a decimal point', () => {
+    // A whole number without one reaches Dart as an int, which
+    // Serverpod's vector decoder refuses.
+    expect(encodeVector([1, 2.5, -3, 0])).toBe('[1.0,2.5,-3.0,0.0]');
+  });
+
+  it('encodes an empty vector', () => {
+    expect(encodeVector([])).toBe('[]');
+  });
+
+  it('decodes a list and the text form', () => {
+    expect(decodeVector([1, 2.5])).toEqual([1, 2.5]);
+    expect(decodeVector('[1.0,2.5]')).toEqual([1, 2.5]);
+  });
+
+  it('rejects anything else', () => {
+    expect(() => decodeVector(5)).toThrow(TypeError);
+  });
+});
+
+describe('UUIDs', () => {
+  const shape = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  it('randomUuidV4 is a version 4, variant 1 UUID', () => {
+    const uuid = randomUuidV4();
+    expect(uuid).toMatch(shape);
+    expect(uuid[14]).toBe('4');
+    expect('89ab').toContain(uuid[19]);
+    expect(randomUuidV4()).not.toBe(uuid);
+  });
+
+  it('randomUuidV7 is a version 7 UUID that starts with the current time', () => {
+    const before = Date.now();
+    const uuid = randomUuidV7();
+    const after = Date.now();
+    expect(uuid).toMatch(shape);
+    expect(uuid[14]).toBe('7');
+    const ms = Number.parseInt(uuid.slice(0, 8) + uuid.slice(9, 13), 16);
+    expect(ms).toBeGreaterThanOrEqual(before);
+    expect(ms).toBeLessThanOrEqual(after);
+  });
+});
+
+describe('ModelRegistry', () => {
+  class Parent {
+    constructor(readonly kind: string) {}
+  }
+  const registry = () => {
+    const models = new ModelRegistry();
+    models.register('Parent', () => new Parent('parent'));
+    models.register('Child', () => new Parent('child'));
+    return models;
+  };
+
+  it('decodes as the declared class when the object names none', () => {
+    expect(registry().decode<Parent>('Parent', {}).kind).toBe('parent');
+  });
+
+  it('decodes as the class the object names, over the declared one', () => {
+    const decoded = registry().decode<Parent>('Parent', { __className__: 'Child' });
+    expect(decoded.kind).toBe('child');
+  });
+
+  it('ignores a module prefix on the class name', () => {
+    const decoded = registry().decode<Parent>('Parent', {
+      __className__: 'some_module.Child',
+    });
+    expect(decoded.kind).toBe('child');
+  });
+
+  it('falls back to the declared class for a name it does not know', () => {
+    const decoded = registry().decode<Parent>('Parent', { __className__: 'Newer' });
+    expect(decoded.kind).toBe('parent');
+  });
+
+  it('throws when neither the named nor the declared class is known', () => {
+    // A sealed parent is never registered: only the name on the wire
+    // can say which subclass to build.
+    expect(() => registry().decode('Sealed', {})).toThrow(/no __className__/);
+    expect(() => registry().decode('Sealed', { __className__: 'Nope' })).toThrow(
+      /unknown class "Nope"/,
+    );
+  });
+
+  it('refuses a value that is not an object', () => {
+    for (const value of [null, 'x', 3, [1]]) {
+      expect(() => registry().decode('Parent', value)).toThrow(TypeError);
+    }
+  });
+});
+
+describe('bareClassName', () => {
+  it('strips a module prefix', () => {
+    expect(bareClassName('serverpod_auth_core.AuthUser')).toBe('AuthUser');
+    expect(bareClassName('AuthUser')).toBe('AuthUser');
   });
 });
 
@@ -207,7 +319,7 @@ describe('SerializationManager.encode (default impl)', () => {
   it('encodes Date / BigInt / Uint8Array via the wire helpers', () => {
     expect(proto.encode(new Date(0))).toBe('1970-01-01T00:00:00.000Z');
     expect(proto.encode(123n)).toBe('123');
-    expect(proto.encode(new Uint8Array([0x68, 0x69]))).toBe('aGk=');
+    expect(proto.encode(new Uint8Array([0x68, 0x69]))).toBe("decode('aGk=', 'base64')");
   });
 
   it('encodes nested collections recursively', () => {

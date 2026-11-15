@@ -26,3 +26,4 @@ paths:
   - test/client_emitter_modules_test.dart
   - test/empty_barrel_emission_test.dart
   - test/nullable_constructor_omission_test.dart
+  - test/live_roundtrip_test.dart

@@ -1,0 +1,6 @@
+### Thrown when a caller exceeds a limit. Extends [AppException].
+exception: QuotaException
+extends: AppException
+fields:
+  ### The limit that was exceeded.
+  limit: int

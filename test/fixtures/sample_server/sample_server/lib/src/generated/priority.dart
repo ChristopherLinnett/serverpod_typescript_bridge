@@ -10,10 +10,10 @@
 // ignore_for_file: invalid_use_of_internal_member
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'package:serverpod/serverpod.dart' as _i1;
+import 'package:serverpod/serverpod.dart' as _is;
 
 /// Task priority. `byIndex` serialization (wire form is the int index).
-enum Priority implements _i1.SerializableModel {
+enum Priority implements _is.SerializableModel {
   /// Lowest priority.
   low,
 

@@ -8,39 +8,107 @@
 // ignore_for_file: type_literal_in_constant_pattern
 // ignore_for_file: use_super_parameters
 // ignore_for_file: invalid_use_of_internal_member
+// ignore_for_file: dead_code, unnecessary_type_check
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'package:serverpod/serverpod.dart' as _i1;
-import 'package:serverpod/protocol.dart' as _i2;
-import 'admin_profile.dart' as _i3;
-import 'animal.dart' as _i4;
-import 'colour.dart' as _i5;
-import 'not_found_exception.dart' as _i6;
-import 'priority.dart' as _i7;
-import 'user_profile.dart' as _i8;
+import 'package:sample_server/src/generated/colour.dart' as _i45zc97h;
+import 'package:sample_server/src/generated/priority.dart' as _i6c81z3f;
+import 'package:sample_server/src/generated/user_profile.dart' as _ih6x7256;
+import 'package:serverpod/protocol.dart' as _isp;
+import 'package:serverpod/serverpod.dart' as _is;
+import 'admin_profile.dart' as _iatoqpz1;
+import 'animal.dart' as _icwrltez;
+import 'app_exception.dart' as _it4z223c;
+import 'colour.dart' as _iy6jkkge;
+import 'embedding.dart' as _isx0ustv;
+import 'not_found_exception.dart' as _i6jvclsf;
+import 'priority.dart' as _isecxwh3;
+import 'quota_exception.dart' as _isik728p;
+import 'settings.dart' as _ibmr8d9c;
+import 'user_profile.dart' as _ir2mn8w1;
 export 'admin_profile.dart';
 export 'animal.dart';
+export 'quota_exception.dart';
+export 'app_exception.dart';
 export 'colour.dart';
+export 'embedding.dart';
 export 'not_found_exception.dart';
 export 'priority.dart';
+export 'settings.dart';
 export 'user_profile.dart';
 
-class Protocol extends _i1.SerializationManagerServer {
+class Protocol extends _is.DatabaseSerializationManager
+    implements _is.DatabaseProtocolDeserializationProvider {
   Protocol._();
 
   factory Protocol() => _instance;
 
   static final Protocol _instance = Protocol._();
 
-  static final List<_i2.TableDefinition> targetTableDefinitions = [
-    ..._i2.Protocol.targetTableDefinitions,
+  @override
+  _is.ProtocolDeserialization get deserializationMetadata =>
+      _is.ProtocolDeserialization.cached(
+        this,
+        types: const [
+          _is.getType<_iatoqpz1.AdminProfile>,
+          _is.getType<_icwrltez.Cat>,
+          _is.getType<_icwrltez.Dog>,
+          _is.getType<_isik728p.QuotaException>,
+          _is.getType<_it4z223c.AppException>,
+          _is.getType<_iy6jkkge.Colour>,
+          _is.getType<_isx0ustv.Embedding>,
+          _is.getType<_i6jvclsf.NotFoundException>,
+          _is.getType<_isecxwh3.Priority>,
+          _is.getType<_ibmr8d9c.Settings>,
+          _is.getType<_ir2mn8w1.UserProfile>,
+          _is.getType<_iatoqpz1.AdminProfile?>,
+          _is.getType<_icwrltez.Cat?>,
+          _is.getType<_icwrltez.Dog?>,
+          _is.getType<_isik728p.QuotaException?>,
+          _is.getType<_it4z223c.AppException?>,
+          _is.getType<_iy6jkkge.Colour?>,
+          _is.getType<_isx0ustv.Embedding?>,
+          _is.getType<_i6jvclsf.NotFoundException?>,
+          _is.getType<_isecxwh3.Priority?>,
+          _is.getType<_ibmr8d9c.Settings?>,
+          _is.getType<_ir2mn8w1.UserProfile?>,
+          _is.getType<List<_isecxwh3.Priority>>,
+          _is.getType<List<int>>,
+          _is.getType<Set<String>>,
+          _is.getType<Map<String, int>>,
+          _is.getType<Map<int, String>>,
+          _is.getType<List<_i6c81z3f.Priority>>,
+          _is.getType<Map<String, _i45zc97h.Colour>>,
+          _is.getType<List<int>?>,
+          _is.getType<Set<int>>,
+          _is.getType<List<_ih6x7256.UserProfile>>,
+        ],
+        modules: const [_isp.Protocol.new],
+        classNames: const [
+          'AdminProfile',
+          'Cat',
+          'Dog',
+          'QuotaException',
+          'AppException',
+          'Colour',
+          'Embedding',
+          'NotFoundException',
+          'Priority',
+          'Settings',
+          'UserProfile',
+          'List<int>',
+        ],
+      );
+
+  static List<_isp.TableDefinition> get targetTableDefinitions => [
+    ..._ownTableDefinitions,
+    ..._isp.Protocol.targetTableDefinitions,
   ];
 
-  static String? getClassNameFromObjectJson(dynamic data) {
-    if (data is! Map) return null;
-    final className = data['__className__'] as String?;
-    return className;
-  }
+  static List<_isp.TableDefinition> get _ownTableDefinitions => [];
+
+  static String? getClassNameFromObjectJson(dynamic data) =>
+      _is.ProtocolDeserialization.readClassName(data);
 
   @override
   T deserialize<T>(
@@ -48,65 +116,93 @@ class Protocol extends _i1.SerializationManagerServer {
     Type? t,
   ]) {
     t ??= T;
-
-    final dataClassName = getClassNameFromObjectJson(data);
+    final rawDataClassName = _is.ProtocolDeserialization.readClassName(data);
+    final dataClassName = rawDataClassName;
     if (dataClassName != null && dataClassName != getClassNameForType(t)) {
       try {
         return deserializeByClassName({
           'className': dataClassName,
           'data': data,
         });
-      } on FormatException catch (_) {
+      } on _is.DeserializationClassNameNotFoundException catch (_) {
         // If the className is not recognized (e.g., older client receiving
         // data with a new subtype), fall back to deserializing without the
         // className, using the expected type T.
       }
     }
 
-    if (t == _i3.AdminProfile) {
-      return _i3.AdminProfile.fromJson(data) as T;
+    if (t == _iatoqpz1.AdminProfile) {
+      return _iatoqpz1.AdminProfile.fromJson(data) as T;
     }
-    if (t == _i4.Cat) {
-      return _i4.Cat.fromJson(data) as T;
+    if (t == _icwrltez.Cat) {
+      return _icwrltez.Cat.fromJson(data) as T;
     }
-    if (t == _i4.Dog) {
-      return _i4.Dog.fromJson(data) as T;
+    if (t == _icwrltez.Dog) {
+      return _icwrltez.Dog.fromJson(data) as T;
     }
-    if (t == _i5.Colour) {
-      return _i5.Colour.fromJson(data) as T;
+    if (t == _isik728p.QuotaException) {
+      return _isik728p.QuotaException.fromJson(data) as T;
     }
-    if (t == _i6.NotFoundException) {
-      return _i6.NotFoundException.fromJson(data) as T;
+    if (t == _it4z223c.AppException) {
+      return _it4z223c.AppException.fromJson(data) as T;
     }
-    if (t == _i7.Priority) {
-      return _i7.Priority.fromJson(data) as T;
+    if (t == _iy6jkkge.Colour) {
+      return _iy6jkkge.Colour.fromJson(data) as T;
     }
-    if (t == _i8.UserProfile) {
-      return _i8.UserProfile.fromJson(data) as T;
+    if (t == _isx0ustv.Embedding) {
+      return _isx0ustv.Embedding.fromJson(data) as T;
     }
-    if (t == _i1.getType<_i3.AdminProfile?>()) {
-      return (data != null ? _i3.AdminProfile.fromJson(data) : null) as T;
+    if (t == _i6jvclsf.NotFoundException) {
+      return _i6jvclsf.NotFoundException.fromJson(data) as T;
     }
-    if (t == _i1.getType<_i4.Cat?>()) {
-      return (data != null ? _i4.Cat.fromJson(data) : null) as T;
+    if (t == _isecxwh3.Priority) {
+      return _isecxwh3.Priority.fromJson(data) as T;
     }
-    if (t == _i1.getType<_i4.Dog?>()) {
-      return (data != null ? _i4.Dog.fromJson(data) : null) as T;
+    if (t == _ibmr8d9c.Settings) {
+      return _ibmr8d9c.Settings.fromJson(data) as T;
     }
-    if (t == _i1.getType<_i5.Colour?>()) {
-      return (data != null ? _i5.Colour.fromJson(data) : null) as T;
+    if (t == _ir2mn8w1.UserProfile) {
+      return _ir2mn8w1.UserProfile.fromJson(data) as T;
     }
-    if (t == _i1.getType<_i6.NotFoundException?>()) {
-      return (data != null ? _i6.NotFoundException.fromJson(data) : null) as T;
+    if (t == _is.getType<_iatoqpz1.AdminProfile?>()) {
+      return (data != null ? _iatoqpz1.AdminProfile.fromJson(data) : null) as T;
     }
-    if (t == _i1.getType<_i7.Priority?>()) {
-      return (data != null ? _i7.Priority.fromJson(data) : null) as T;
+    if (t == _is.getType<_icwrltez.Cat?>()) {
+      return (data != null ? _icwrltez.Cat.fromJson(data) : null) as T;
     }
-    if (t == _i1.getType<_i8.UserProfile?>()) {
-      return (data != null ? _i8.UserProfile.fromJson(data) : null) as T;
+    if (t == _is.getType<_icwrltez.Dog?>()) {
+      return (data != null ? _icwrltez.Dog.fromJson(data) : null) as T;
     }
-    if (t == List<_i7.Priority>) {
-      return (data as List).map((e) => deserialize<_i7.Priority>(e)).toList()
+    if (t == _is.getType<_isik728p.QuotaException?>()) {
+      return (data != null ? _isik728p.QuotaException.fromJson(data) : null)
+          as T;
+    }
+    if (t == _is.getType<_it4z223c.AppException?>()) {
+      return (data != null ? _it4z223c.AppException.fromJson(data) : null) as T;
+    }
+    if (t == _is.getType<_iy6jkkge.Colour?>()) {
+      return (data != null ? _iy6jkkge.Colour.fromJson(data) : null) as T;
+    }
+    if (t == _is.getType<_isx0ustv.Embedding?>()) {
+      return (data != null ? _isx0ustv.Embedding.fromJson(data) : null) as T;
+    }
+    if (t == _is.getType<_i6jvclsf.NotFoundException?>()) {
+      return (data != null ? _i6jvclsf.NotFoundException.fromJson(data) : null)
+          as T;
+    }
+    if (t == _is.getType<_isecxwh3.Priority?>()) {
+      return (data != null ? _isecxwh3.Priority.fromJson(data) : null) as T;
+    }
+    if (t == _is.getType<_ibmr8d9c.Settings?>()) {
+      return (data != null ? _ibmr8d9c.Settings.fromJson(data) : null) as T;
+    }
+    if (t == _is.getType<_ir2mn8w1.UserProfile?>()) {
+      return (data != null ? _ir2mn8w1.UserProfile.fromJson(data) : null) as T;
+    }
+    if (t == List<_isecxwh3.Priority>) {
+      return (data as List)
+              .map((e) => deserialize<_isecxwh3.Priority>(e))
+              .toList()
           as T;
     }
     if (t == List<int>) {
@@ -132,27 +228,62 @@ class Protocol extends _i1.SerializationManagerServer {
           )
           as T;
     }
-    if (t == _i1.getType<List<int>?>()) {
+    if (t == List<_i6c81z3f.Priority>) {
+      return (data as List)
+              .map((e) => deserialize<_i6c81z3f.Priority>(e))
+              .toList()
+          as T;
+    }
+    if (t == Map<String, _i45zc97h.Colour>) {
+      return (data as Map).map(
+            (k, v) => MapEntry(
+              deserialize<String>(k),
+              deserialize<_i45zc97h.Colour>(v),
+            ),
+          )
+          as T;
+    }
+    if (t == _is.getType<List<int>?>()) {
       return (data != null
               ? (data as List).map((e) => deserialize<int>(e)).toList()
               : null)
           as T;
     }
-    try {
-      return _i2.Protocol().deserialize<T>(data, t);
-    } on _i1.DeserializationTypeNotFoundException catch (_) {}
+    if (t == Set<int>) {
+      return (data as List).map((e) => deserialize<int>(e)).toSet() as T;
+    }
+    if (t == List<_ih6x7256.UserProfile>) {
+      return (data as List)
+              .map((e) => deserialize<_ih6x7256.UserProfile>(e))
+              .toList()
+          as T;
+    }
+    final modules = deserializationMetadata.modulesForDeserialization(
+      t,
+      className: rawDataClassName,
+    );
+    for (final module in modules) {
+      try {
+        return module.deserialize<T>(data, t);
+      } on _is.DeserializationTypeNotFoundException catch (_) {}
+    }
+
     return super.deserialize<T>(data, t);
   }
 
   static String? getClassNameForType(Type type) {
     return switch (type) {
-      _i3.AdminProfile => 'AdminProfile',
-      _i4.Cat => 'Cat',
-      _i4.Dog => 'Dog',
-      _i5.Colour => 'Colour',
-      _i6.NotFoundException => 'NotFoundException',
-      _i7.Priority => 'Priority',
-      _i8.UserProfile => 'UserProfile',
+      _iatoqpz1.AdminProfile => 'AdminProfile',
+      _icwrltez.Cat => 'Cat',
+      _icwrltez.Dog => 'Dog',
+      _isik728p.QuotaException => 'QuotaException',
+      _it4z223c.AppException => 'AppException',
+      _iy6jkkge.Colour => 'Colour',
+      _isx0ustv.Embedding => 'Embedding',
+      _i6jvclsf.NotFoundException => 'NotFoundException',
+      _isecxwh3.Priority => 'Priority',
+      _ibmr8d9c.Settings => 'Settings',
+      _ir2mn8w1.UserProfile => 'UserProfile',
       _ => null,
     };
   }
@@ -167,24 +298,35 @@ class Protocol extends _i1.SerializationManagerServer {
     }
 
     switch (data) {
-      case _i3.AdminProfile():
+      case _iatoqpz1.AdminProfile():
         return 'AdminProfile';
-      case _i4.Cat():
+      case _icwrltez.Cat():
         return 'Cat';
-      case _i4.Dog():
+      case _icwrltez.Dog():
         return 'Dog';
-      case _i5.Colour():
+      case _isik728p.QuotaException():
+        return 'QuotaException';
+      case _it4z223c.AppException():
+        return 'AppException';
+      case _iy6jkkge.Colour():
         return 'Colour';
-      case _i6.NotFoundException():
+      case _isx0ustv.Embedding():
+        return 'Embedding';
+      case _i6jvclsf.NotFoundException():
         return 'NotFoundException';
-      case _i7.Priority():
+      case _isecxwh3.Priority():
         return 'Priority';
-      case _i8.UserProfile():
+      case _ibmr8d9c.Settings():
+        return 'Settings';
+      case _ir2mn8w1.UserProfile():
         return 'UserProfile';
     }
-    className = _i2.Protocol().getClassNameForObject(data);
+    if (data is List<int>) {
+      return 'List<int>';
+    }
+    className = _isp.Protocol().getClassNameForObject(data);
     if (className != null) {
-      return 'serverpod.$className';
+      return className.contains('.') ? className : 'serverpod.$className';
     }
     return null;
   }
@@ -196,37 +338,54 @@ class Protocol extends _i1.SerializationManagerServer {
       return super.deserializeByClassName(data);
     }
     if (dataClassName == 'AdminProfile') {
-      return deserialize<_i3.AdminProfile>(data['data']);
+      return deserialize<_iatoqpz1.AdminProfile>(data['data']);
     }
     if (dataClassName == 'Cat') {
-      return deserialize<_i4.Cat>(data['data']);
+      return deserialize<_icwrltez.Cat>(data['data']);
     }
     if (dataClassName == 'Dog') {
-      return deserialize<_i4.Dog>(data['data']);
+      return deserialize<_icwrltez.Dog>(data['data']);
+    }
+    if (dataClassName == 'QuotaException') {
+      return deserialize<_isik728p.QuotaException>(data['data']);
+    }
+    if (dataClassName == 'AppException') {
+      return deserialize<_it4z223c.AppException>(data['data']);
     }
     if (dataClassName == 'Colour') {
-      return deserialize<_i5.Colour>(data['data']);
+      return deserialize<_iy6jkkge.Colour>(data['data']);
+    }
+    if (dataClassName == 'Embedding') {
+      return deserialize<_isx0ustv.Embedding>(data['data']);
     }
     if (dataClassName == 'NotFoundException') {
-      return deserialize<_i6.NotFoundException>(data['data']);
+      return deserialize<_i6jvclsf.NotFoundException>(data['data']);
     }
     if (dataClassName == 'Priority') {
-      return deserialize<_i7.Priority>(data['data']);
+      return deserialize<_isecxwh3.Priority>(data['data']);
+    }
+    if (dataClassName == 'Settings') {
+      return deserialize<_ibmr8d9c.Settings>(data['data']);
     }
     if (dataClassName == 'UserProfile') {
-      return deserialize<_i8.UserProfile>(data['data']);
+      return deserialize<_ir2mn8w1.UserProfile>(data['data']);
     }
     if (dataClassName.startsWith('serverpod.')) {
-      data['className'] = dataClassName.substring(10);
-      return _i2.Protocol().deserializeByClassName(data);
+      return _isp.Protocol().deserializeByClassName({
+        ...data,
+        'className': dataClassName.substring(10),
+      });
+    }
+    if (dataClassName == 'List<int>') {
+      return deserialize<List<int>>(data['data']);
     }
     return super.deserializeByClassName(data);
   }
 
   @override
-  _i1.Table? getTableForType(Type t) {
+  _is.Table? getTableForType(Type t) {
     {
-      var table = _i2.Protocol().getTableForType(t);
+      var table = _isp.Protocol().getTableForType(t);
       if (table != null) {
         return table;
       }
@@ -235,8 +394,11 @@ class Protocol extends _i1.SerializationManagerServer {
   }
 
   @override
-  List<_i2.TableDefinition> getTargetTableDefinitions() =>
+  List<_isp.TableDefinition> getTargetTableDefinitions() =>
       targetTableDefinitions;
+
+  @override
+  List<_isp.TableDefinition> getOwnTableDefinitions() => _ownTableDefinitions;
 
   @override
   String getModuleName() => 'sample';
@@ -251,7 +413,7 @@ class Protocol extends _i1.SerializationManagerServer {
       return null;
     }
     try {
-      return _i2.Protocol().mapRecordToJson(record);
+      return _isp.Protocol().mapRecordToJson(record);
     } catch (_) {}
     throw Exception('Unsupported record type ${record.runtimeType}');
   }

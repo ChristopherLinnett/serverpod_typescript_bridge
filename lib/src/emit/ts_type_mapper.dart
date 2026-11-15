@@ -69,6 +69,10 @@ class TsTypeMapper {
   /// emitter is responsible for the matching `import` line.
   final ModuleClassIndex moduleIndex;
 
+  /// Every type this mapper was asked for and could not express; those
+  /// surface in the generated code as `unknown`, passed through unencoded.
+  final Set<String> unsupportedTypes = {};
+
   TsTypeRef map(TypeDefinition type) {
     final base = _mapInner(type);
     if (!type.nullable) return base;
@@ -114,6 +118,23 @@ class TsTypeMapper {
         );
       case 'UuidValue':
       case 'Uri':
+        return _passthrough('string');
+      // A list of numbers on the wire.
+      case 'Vector':
+      case 'HalfVector':
+        return TsTypeRef(
+          tsType: 'number[]',
+          toJsonExpr: (v) => 'r.encodeVector($v)',
+          fromJsonExpr: (v) => 'r.decodeVector($v)',
+        );
+      // Text on the wire: pgvector's sparse (`{1:1.5,3:2}/6`) and bit
+      // (`101`) forms, and EWKT for geography (`SRID=4326;POINT(1 2)`).
+      case 'SparseVector':
+      case 'Bit':
+      case 'GeographyPoint':
+      case 'GeographyLineString':
+      case 'GeographyPolygon':
+      case 'GeographyGeometryCollection':
         return _passthrough('string');
       case 'ByteData':
       case 'Uint8List':
@@ -228,6 +249,7 @@ class TsTypeMapper {
 
     // 3. Foreign + unknown — neither local nor in any module dep.
     // Falls back to `unknown` so the package still compiles.
+    unsupportedTypes.add('$type');
     return TsTypeRef(
       tsType: 'unknown /* TODO: unknown type $className */',
       toJsonExpr: (v) => '$v as unknown',
@@ -247,14 +269,15 @@ class TsTypeMapper {
       );
     }
 
-    final fromJsonReceiver = sealedClassNames.contains(className)
-        ? '$modelPrefix${className}Base'
-        : qualifiedType;
+    // Through the registry rather than `$className.fromJson`: the wire's
+    // `__className__` decides the class, so a subclass sent where its
+    // parent is declared arrives as the subclass, and a sealed type
+    // resolves to its concrete member — as Serverpod's Dart client does.
     return TsTypeRef(
       tsType: qualifiedType,
       toJsonExpr: (v) => '$v.toJson()',
       fromJsonExpr: (v) =>
-          '$fromJsonReceiver.fromJson($v as Record<string, unknown>)',
+          "models.decode<$qualifiedType>('$className', $v)",
     );
   }
 

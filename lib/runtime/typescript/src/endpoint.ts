@@ -1,7 +1,8 @@
 import type { HttpTransport, UnaryCallOptions } from './http_transport.js';
-import type {
-  ClientMethodStreamManager,
-  InputStreamSpec,
+import {
+  deferredIterable,
+  type ClientMethodStreamManager,
+  type InputStreamSpec,
 } from './ws_transport.js';
 
 /**
@@ -31,7 +32,7 @@ export interface EndpointCaller {
     args: Record<string, unknown>,
     decode: (raw: unknown) => T,
     inputStreams?: Record<string, InputStreamSpec>,
-  ): Promise<AsyncIterable<T>>;
+  ): AsyncIterable<T>;
 }
 
 /**
@@ -76,7 +77,7 @@ export abstract class ModuleEndpointCaller implements EndpointCaller {
     args: Record<string, unknown>,
     decode: (raw: unknown) => T,
     inputStreams?: Record<string, InputStreamSpec>,
-  ): Promise<AsyncIterable<T>> {
+  ): AsyncIterable<T> {
     return this.parent.callStreamingServerEndpoint(
       endpoint,
       method,
@@ -114,19 +115,22 @@ export class HttpEndpointCaller implements EndpointCaller {
     args: Record<string, unknown>,
     decode: (raw: unknown) => T,
     inputStreams?: Record<string, InputStreamSpec>,
-  ): Promise<AsyncIterable<T>> {
+  ): AsyncIterable<T> {
     if (!this.streams) {
       throw new Error(
         'No ClientMethodStreamManager configured — streaming endpoints ' +
           'require ServerpodClientShared with the streaming runtime wired.',
       );
     }
-    return this.streams.openMethodStream<T>({
-      endpoint,
-      method,
-      args,
-      decode,
-      ...(inputStreams ? { inputStreams } : {}),
-    });
+    const streams = this.streams;
+    return deferredIterable(() =>
+      streams.openMethodStream<T>({
+        endpoint,
+        method,
+        args,
+        decode,
+        ...(inputStreams ? { inputStreams } : {}),
+      }),
+    );
   }
 }

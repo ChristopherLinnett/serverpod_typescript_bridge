@@ -57,7 +57,7 @@ import 'package:serverpod_cli/analyzer.dart';
 The package additionally reaches into a small set of `serverpod_cli/src/` paths (StatefulAnalyzer, ModelHelper, CodeGenerationCollector, the experimental-features singleton, ModuleConfig, ServerpodFeature). That coupling is documented in `lib/src/analyzer/protocol_loader.dart`'s file header; Serverpod's own internal generators (e.g. `EndpointDescriptionGenerator`) use the same `src/` types, so the IR shape is stable across patch releases.
 
 We:
-- Add `serverpod_cli: ^3.4.7` and `serverpod_shared: ^3.4.7` as deps.
+- Add `serverpod_cli: ^4.1.2` and `serverpod_shared: ^4.1.2` as deps.
 - Use `GeneratorConfig.load()` for the **app's** project discovery and config parsing.
 - For **module** packages (loaded out of pub-cache), `GeneratorConfig.load` would fail because it validates the sibling Dart client package — pub-cache modules don't ship one. `ProtocolLoader.loadForModule(...)` synthesises a minimal `GeneratorConfig` from the module's own `pubspec.yaml` + `config/generator.yaml` instead, populating only the fields the IR analyzers actually consult.
 - Use `EndpointsAnalyzer` + `StatefulAnalyzer` to produce a `ProtocolDefinition` (the same IR Serverpod uses internally).
@@ -199,23 +199,47 @@ export class User implements SerializableModel {
 }
 ```
 
-For sealed hierarchies, we emit an abstract base class plus concrete subclasses, with a discriminated-union TS type alias and a `fromJson` that dispatches on `__className__`. The dispatcher walks the full sealed-ancestor chain so multi-level hierarchies (sealed `A` → sealed `B` → concrete `C`) all resolve correctly:
+A field with a model default (`count: int, default=3`) is omittable too, and falls back to the value the Dart client's constructor uses.
+
+`extends` is class inheritance. A subclass declares only its own fields, takes every field (inherited ones included) in its constructor, and passes the bag up:
 
 ```ts
-export type Animal = Dog | Cat;
-export abstract class AnimalBase implements SerializableModel {
-  abstract toJson(): Record<string, unknown>;
-  static fromJson(json: Record<string, unknown>): Animal {
-    switch (json.__className__) {
-      case 'Dog': return Dog.fromJson(json);
-      case 'Cat': return Cat.fromJson(json);
-      default: throw new Error(`Unknown Animal subtype: ${json.__className__}`);
-    }
+export class AdminProfile extends UserProfile implements SerializableModel {
+  scope: string;
+
+  constructor(init: { id: number; displayName: string; /* … */ scope: string }) {
+    super(init);
+    this.scope = init.scope;
   }
 }
 ```
 
-The top-level `Protocol.deserializeByClassName` strips an optional `<module>.` prefix from incoming `__className__` values before switching, so a server's `auth.AuthSuccess` and a bare `AuthSuccess` both dispatch to the same case.
+A sealed class is an abstract `<Name>Base` holding the shared fields, plus a union type under the bare name so a `switch` over its members is exhaustive:
+
+```ts
+export type Animal = Cat | Dog;
+export abstract class AnimalBase implements SerializableModel {
+  name: string;
+  constructor(init: { name: string }) { this.name = init.name; }
+  abstract toJson(): Record<string, unknown>;
+  static fromJson(json: Record<string, unknown>): Animal {
+    return models.decode<Animal>('Animal', json);
+  }
+}
+```
+
+#### The model registry
+
+Model files do not import each other's classes. Each package has a leaf module, `src/protocol/_registry.ts`, holding one `ModelRegistry`; every concrete model registers its `fromJson` there when its file loads, and a field or return of a model type is decoded with `models.decode<T>('<Declared>', json)`.
+
+Two things depend on this:
+
+- **Import order.** ES modules cannot evaluate two files that need each other's values first. A sealed base that imported its subclasses (to dispatch) while each subclass imported the base (to extend it) made the whole package throw on import as soon as a hierarchy had two subclasses. With the registry the only value import between model files is a subclass importing its parent, and that graph has no cycles. Sibling classes are imported with `import type`; enums stay value imports, which is safe because an enum file imports nothing.
+- **Polymorphism.** `decode` builds the class the wire's `__className__` names when the package has it, and the declared class otherwise. A subclass returned where its parent is declared stays the subclass, a sealed type resolves to its member, and an object from a newer server still decodes as the declared type — the behaviour of the Dart client's `Protocol.deserialize`.
+
+`toJson` writes `__className__` first — `<package>.<Class>` in a module package, the bare class name in an app — and leaves a `null` field out, as Dart's `toJsonForProtocol` does.
+
+The top-level `Protocol.deserializeByClassName` strips an optional `<module>.` prefix from incoming class names before switching, so a server's `serverpod_auth_core.AuthSuccess` and a bare `AuthSuccess` both dispatch to the same case.
 
 ### Endpoints — generated TS shape
 
@@ -238,19 +262,24 @@ export class EndpointGreeting extends EndpointRef {
 
 Public-call endpoints (`@unauthenticatedClientCall`) add `{ authenticated: false }`. Optional named params emit `?:` (omittable); optional positional params likewise. Required-positional and `required`-named params stay required to match the Dart contract. Wire keys always use the original Dart parameter name even when the local TS variable is escaped (so a Dart param named `class` keeps `class:` on the wire).
 
-Streaming endpoints emit a non-async signature returning `AsyncIterable<T>`:
+Arguments are encoded by their declared type (`r.encodeDateTime(at)`, `p.PriorityCodec.toJson(value)`), never by inspecting the value: an enum sent by index and a `Duration` are both plain values in TypeScript.
+
+Streaming endpoints emit a non-async signature returning `AsyncIterable<T>`. The connection opens when iteration starts, and breaking out of the loop tells the server to stop:
 
 ```ts
 chat(named: { since?: Date | null }, streams: { incoming: AsyncIterable<string> }):
   AsyncIterable<string>
 {
   return this.caller.callStreamingServerEndpoint<string>(
-    'chat', 'chat', { since: named.since },
-    (raw) => raw as string,
-    { incoming: { iterable: streams.incoming, encode: (v) => ({...}) } },
-  ) as unknown as AsyncIterable<string>;
+    'chat', 'chat', { ... },
+    (raw: unknown) => raw as string,
+    { 'incoming': { iterable: streams.incoming,
+        encode: (v: string) => r.classNamed('String', v) } as r.InputStreamSpec },
+  );
 }
 ```
+
+`r.classNamed` pairs each value with the class name the server decodes it by: the declared type's name as Serverpod's generator spells it (`List<int>`, `Map<String,int?>`), or the value's own `__className__` when it is a model — the concrete class, which is the only name the server knows when the declared type is sealed. A method with input streams and a `Future<T>` return is emitted as `Promise<T>` through `r.streamResult(...)`.
 
 ### Top-level `Client`
 
@@ -308,10 +337,11 @@ The runtime's `SerializationManager` mirrors `serverpod_serialization`:
 
 - **HTTP unary:** `POST <host>/<endpointName>`, body = `JSON.stringify({ method: '<methodName>', ...args })` after each value is converted to wire form. Status-mapped error envelopes (400/401/403/404/500) are decoded into their TS exception subclasses; typed `{className, data}` envelopes decode through `Protocol.deserializeByClassName`.
 - **Auth header:** `Authorization: <wrappedAuthValue>`. Suppressed when the call site sets `{ authenticated: false }`. If the provider implements `RefreshableClientAuthKeyProvider` and the server returns 401, the runtime calls `refresh()` once and retries.
-- **WebSocket streaming:** `ws(s)://<host>/v1/websocket?auth=<rawKey>`. The runtime derives the WS scheme from the configured host via `host.replace(/^http/, 'ws')`, so an `https://` host upgrades to `wss://` automatically; an `http://` host stays plain `ws://`. The runtime also strips a `Bearer ` / `Basic ` prefix from the auth header value before putting it in the query. Messages use a `{type, data}` envelope; `OpenMethodStreamCommand` carries `args` as a *double-encoded JSON string* matching the Dart contract. Server-initiated `ping` is replied to with `pong`; `bad_request` fails every active handler with a 400-status exception.
-- **Primitive encodings:** ISO-8601 UTC for `Date`, integer ms for `Duration`, base64 for `Uint8Array`, string for `BigInt`, list of `{k,v}` for non-string-keyed maps.
+- **WebSocket streaming:** `ws(s)://<host>/v1/websocket`, one connection for every stream of a client, opened by the first call and closed when the last stream ends. Frames follow Serverpod 4's method-stream protocol — `{type, data}` with abbreviated keys (`omsc`/`omsr`/`msm`/`msse`/`cmsc`, `en`, `m`, `cid`, …), a UUID connection id, and a `done`/`error` reason on every close. Credentials travel in the open command's `auth` field, as the same value the `Authorization` header carries. The client pings on connect and every 20 s, and drops a connection that stays silent for 40 s. An `authenticationFailed` answer is retried once after `refresh()` when the provider supports it.
+- **Stream values:** each is a `{className, data}` pair; a typed exception raised mid-stream arrives in an `msse` frame and is thrown from the iterator after the values that preceded it.
+- **Primitive encodings:** ISO-8601 UTC for `Date`, integer ms for `Duration`, `decode('<base64>', 'base64')` for `Uint8Array`, string for `BigInt`, list of `{k,v}` for non-string-keyed maps, pgvector text for vectors.
 
-These rules are spec'd by `vitest` tests in `lib/runtime/typescript/src/__tests__/`, not by the generator.
+These rules are spec'd by `vitest` tests in `lib/runtime/typescript/src/__tests__/`, and proven against a running Serverpod server by `test/live_roundtrip_test.dart`.
 
 ---
 
@@ -356,8 +386,8 @@ typescript_client_modules:
 
 | Dep                  | Why                                                                | Version range          |
 |----------------------|--------------------------------------------------------------------|------------------------|
-| `serverpod_cli`      | Reused analyzer + IR                                               | `^3.4.7` (pin minor)   |
-| `serverpod_shared`   | `DatabaseDialect` for the synthesised module GeneratorConfig       | `^3.4.7`               |
+| `serverpod_cli`      | Reused analyzer + IR                                               | `^4.1.2` (pin minor)   |
+| `serverpod_shared`   | `DatabaseDialect` for the synthesised module GeneratorConfig       | `^4.1.2`               |
 | `args`               | CLI parsing                                                        | `^2.5.0`               |
 | `path`               | Path manipulation                                                  | `^1.9.0`               |
 | `yaml`               | Reading `generator.yaml`                                           | `^3.1.2`               |
@@ -375,11 +405,12 @@ Three layers:
 
 1. **Unit tests (Dart)** — focused tests for individual emitters / helpers / discovery components: `module_discoverer`, `module_client_layout`, `module_import_lines`, `client_emitter_modules`, `empty_barrel_emission`, `nullable_constructor_omission`, `ts_writer`, `output_paths`, `generated_file_tracker`. All registered in `dart_test.yaml`.
 2. **Fixture-driven integration tests (Dart)** — drive the CLI as a subprocess against committed Serverpod fixtures (`test/fixtures/sample_server/` and `test/fixtures/sample_module/`), then assert on the generated source. `generate_command_test` additionally runs the generated package through `npm install` + `tsc` to catch downstream type errors. `module_emission_test` and `bidi_streaming_emission_test` cover the module-typed and streaming paths respectively.
-3. **TypeScript runtime tests (vitest)** — every primitive converter (round-trip both directions), every HTTP status mapping, the auth-refresh single-retry behaviour, and the WS envelope parser. Lives under `lib/runtime/typescript/src/__tests__/`.
+3. **Live round trip** — `test/live_roundtrip_test.dart` boots the `sample_server` fixture as a real Serverpod server on free ports, generates and builds its TypeScript client, and runs `test/live/roundtrip.mjs` in Node against it: every fixture endpoint, over HTTP and WebSocket. It is the only layer that executes generated code; source that type-checks can still fail to import or put bytes on the wire the server refuses, and this is where that shows.
+4. **TypeScript runtime tests (vitest)** — every primitive converter (round-trip both directions), every HTTP status mapping, the auth-refresh single-retry behaviour, and the WS envelope parser. Lives under `lib/runtime/typescript/src/__tests__/`.
 
 The committed fixtures (`sample_server`, `sample_module`) are the parity oracle — every supported Serverpod feature gets exercised there. Adding a new feature surface = update the fixture, regenerate, commit the regenerated `lib/src/generated/` alongside.
 
-Current totals: **109 Dart tests, 62 TypeScript tests** (as of v0.2.4). Both layers must pass before opening a PR.
+Current totals: **112 Dart tests** (one of them the live round trip, 78 checks) and **96 TypeScript tests** (as of v0.3.0). All must pass before opening a PR.
 
 ---
 
@@ -389,11 +420,12 @@ Current totals: **109 Dart tests, 62 TypeScript tests** (as of v0.2.4). Both lay
 |--------|-----------------------------------------------------------------------------|
 | `0.1.x`| Initial vendored-runtime release; full Serverpod feature surface (endpoints, models, sealed hierarchies, enums, exceptions, streaming, modules as `Caller`-emission-only). |
 | `0.2.x`| Module-aware generation: the consumer side. Recursive generation per module dep (sibling layout), `file:..` deps wiring, cross-package `import { Name } from '<module-pkg>';` lines, protocol switch dispatching module classes. v0.2.4 added omittable-nullable model constructors. |
+| `0.3.x`| Serverpod 4. Streaming transport rewritten to the 4.x method-stream protocol; real class inheritance; registry-based decoding (no import cycles, polymorphic); typed argument encoding; field defaults; vectors and geography; the live round-trip test. |
 | `1.0.0`| Once the IR-shape contract has been stable across two Serverpod minor versions and a real production project has shipped on it. |
 
-## Out of scope (post-v0.2)
+## Out of scope
 
-- **Records** (Dart 3 records as endpoint params/return). Defer until there's user demand.
+- **Records** (Dart 3 records as endpoint params/return) and **`dynamic`** values. Typed `unknown` and passed through; `generate` names each one in a warning.
 - **Watch mode.** Nice-to-have but not blocking; the user can re-run `generate`.
 - **npm-published runtime.** Vendored is composing well with the v0.2 module-deps wiring; a published runtime stays an option but isn't on a date.
 - **Typed `Modules.<nickname>: <Caller>` surface.** Currently a `unknown`-typed stub; cross-package types resolve directly through their generated packages.
